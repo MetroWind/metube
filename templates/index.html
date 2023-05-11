@@ -1,0 +1,16 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    {% include 'includes.html' %}
+    <title>MeTube -> Index</title>
+  </head>
+  <body>
+    <div class="container">
+      <ul class="VideoList">
+        {% for user in users -%}
+        <li><a href="{{ user.url }}">{{ user.username }}</a></li>
+        {%- endfor %}
+      </ul>
+    </div>
+  </body>
+</html>

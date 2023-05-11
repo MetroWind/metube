@@ -52,8 +52,7 @@ impl ToResponse for Result<Response, Error>
      }
 }
 
-fn handleIndex(config: &Configuration, templates: &Tera) ->
-    Result<String, Error>
+fn handleIndex(templates: &Tera) -> Result<String, Error>
 {
     let mut context = tera::Context::new();
     context.insert("index", &videos);
@@ -66,84 +65,6 @@ fn handleIndex(config: &Configuration, templates: &Tera) ->
         |e| rterr!("Failed to render template index.html: {}", e))
 }
 
-fn handleFamily(family_name: String, data: &data::GameData, templates: &Tera,)
-                -> Result<String, Error>
-{
-    let family_name = urlencoding::decode(&family_name).map_err(
-        |_| rterr!("Invalid family: {}", family_name))?.to_string();
-    if let Some(family) = data.family(&family_name)
-    {
-        let mut context = tera::Context::new();
-        context.insert("family", &family);
-
-        let monsters: Vec<Monster> = data.monstersInFamily(&family)
-            .map(|f| f.clone()).collect();
-        context.insert("monsters", &monsters);
-
-        let parent = Parent::Family(family_name);
-        let forms: Vec<&Formula> = data.usedInFormulae(&parent).collect();
-        context.insert("uses", &forms);
-
-        templates.render("family.html", &context).map_err(
-            |e| rterr!("Failed to render template family.html: {}", e))
-    }
-    else
-    {
-        Err(rterr!("Family not found: {}", family_name))
-    }
-}
-
-fn handleMonster(monster_name: String, data: &data::GameData, templates: &Tera,)
-                -> Result<String, Error>
-{
-    let monster_name = urlencoding::decode(&monster_name).map_err(
-        |_| rterr!("Invalid monster: {}", monster_name))?.to_string();
-    if let Some(monster) = data.monster(&monster_name)
-    {
-        let mut context = tera::Context::new();
-        context.insert("monster", &monster);
-
-        let family = data.family(&monster.family).ok_or_else(
-            || rterr!("Invalid family '{}' of monster {}", monster.family,
-                      monster.name))?;
-        context.insert("family_name", &family.name);
-
-        let breeds: Vec<&Formula> =
-            data.breedFromFormulae(&monster_name).collect();
-        context.insert("breeds", &breeds);
-
-        let parent = Parent::Monster(monster_name);
-        let uses: Vec<&Formula> = data.usedInFormulae(&parent).collect();
-        context.insert("uses", &uses);
-
-        templates.render("monster.html", &context).map_err(
-            |e| rterr!("Failed to render template monster.html: {}", e))
-    }
-    else
-    {
-        Err(rterr!("Monster not found: {}", monster_name))
-    }
-
-}
-
-fn handleSkill(skill_name: String, data: &data::GameData, templates: &Tera,)
-               -> Result<String, Error>
-{
-    let skill_name = urlencoding::decode(&skill_name).map_err(
-        |_| rterr!("Invalid monster: {}", skill_name))?.to_string();
-    if let Some(skill) = data.skill(&skill_name)
-    {
-        let mut context = tera::Context::new();
-        context.insert("skill", &SkillDetail::fromSkill(skill, data).unwrap());
-        templates.render("skill.html", &context).map_err(
-            |e| rterr!("Failed to render template skill.html: {}", e))
-    }
-    else
-    {
-        Err(rterr!("Skill not found: {}", skill_name))
-    }
-}
-
 fn urlEncode(s: &str) -> String
 {
     urlencoding::encode(s).to_string()
@@ -154,10 +75,6 @@ fn urlFor(name: &str, arg: &str) -> String
     match name
     {
         "index" => String::from("/"),
-        "family" => String::from("/family/") + &urlEncode(arg),
-        "monster" => String::from("/monster/") + &urlEncode(arg),
-        "skill" => String::from("/skill/") + &urlEncode(arg),
-        "static" => String::from("/static/") + &urlEncode(arg),
         _ => String::from("/"),
     }
 }
