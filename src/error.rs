@@ -36,7 +36,7 @@ pub enum Error
     /// data from the data source, etc. This is not a “logic error”
     /// such as an error from generating SQL statement due to invalid
     /// backlinks.
-
+    DataError(String),
     RuntimeError(String),
 }
 
@@ -46,6 +46,7 @@ impl fmt::Display for Error
     {
         match self
         {
+            Error::DataError(msg) => write!(f, "Data error: {}", msg),
             Error::RuntimeError(msg) => write!(f, "Runtime error: {}", msg),
         }
     }
