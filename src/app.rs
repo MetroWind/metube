@@ -1,11 +1,13 @@
-use std::io::Read;
 use std::path::{PathBuf, Path};
 use std::collections::HashMap;
+use std::io::prelude::*;
+use std::io::BufWriter;
 use std::fs::File;
 
 use futures_util::TryStreamExt;
+use futures_util::StreamExt;
 use bytes::buf::Buf;
-use log::info;
+use log::{info, debug};
 use log::error as log_error;
 use tera::Tera;
 use warp::{Filter, Reply};
@@ -72,21 +74,58 @@ fn handleUploadPage(templates: &Tera) -> Result<String, Error>
         |e| rterr!("Failed to render template upload.html: {}", e))
 }
 
-async fn handleUpload(data: warp::multipart::FormData) ->
+fn randomTempFilename<P: AsRef<Path>>(dir: P) -> PathBuf
+{
+    loop
+    {
+        let filename = format!("temp-{}", rand::random::<u32>());
+        let path = dir.as_ref().join(&filename);
+        if !path.exists()
+        {
+            return path;
+        }
+    }
+}
+
+async fn handleUpload(data: warp::multipart::FormData,
+                      config: &Configuration) ->
     Result<String, warp::Rejection>
 {
     println!("Handling upload...");
-    let field_names: Vec<_> = data.and_then(|mut field| async move {
-        info!("Got chunk?");
-        let contents =
-            String::from_utf8_lossy(field.data().await.unwrap().unwrap().chunk())
-            .to_string();
-        Ok((
-            field.name().to_string(),
-            field.filename().unwrap().to_string(),
-            contents,
-        ))
-    }).try_collect().await.unwrap();
+    let parts: Vec<_> = data.and_then(
+        |mut part| async move {
+            let mut f = match File::create(
+                randomTempFilename(&config.video_dir))
+            {
+                Ok(f) => BufWriter::new(f),
+                Err(e) => {
+                    log_error!("Oops...");
+                    return Ok(Some(format!("Failed to open temp file: {}", e)));
+                },
+            };
+            let mut buffers = part.stream();
+            while let Some(buffer) = buffers.next().await
+            {
+                let mut buffer = buffer?;
+                while buffer.has_remaining()
+                {
+                    let bytes = buffer.chunk();
+                    if let Err(e) = f.write_all(bytes)
+                    {
+                        return Ok(Some(format!("Failed to write chunk: {}", e)));
+                    }
+                    buffer.advance(bytes.len());
+                }
+            }
+            Ok(None)
+        }).try_collect().await.map_err(|e| warp::reject::reject())?;
+    for part in parts
+    {
+        if let Some(msg) = part
+        {
+            return Err(warp::reject::reject());
+        }
+    }
     Ok::<_, warp::Rejection>(String::from("OK"))
 }
 
@@ -202,10 +241,14 @@ impl App
             .and(warp::path::end()).map(
                 move || handleUploadPage(&temp).toResponse());
 
+        let config = self.config.clone();
         let upload = warp::post().and(warp::path("upload"))
             .and(warp::multipart::form().max_length(self.config.upload_size_max))
-            .and_then(|data: warp::multipart::FormData| async move {
-                handleUpload(data).await
+            .and_then(move |data: warp::multipart::FormData| {
+                let config = config.clone();
+                async move {
+                    handleUpload(data, &config).await
+                }
             });
 
         // let data = self.data.clone();
