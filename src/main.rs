@@ -6,7 +6,7 @@ mod video;
 mod sqlite_connection;
 mod data;
 mod library;
-// mod app;
+mod app;
 mod config;
 
 use std::path::Path;
@@ -52,7 +52,8 @@ fn main() -> Result<(), Error>
     // {
     //     config.serve_under_path = p.clone();
     // }
-    // let a = app::App::new(config)?;
-    // tokio::runtime::Runtime::new().unwrap().block_on(a.serve())?;
+    let config = Configuration::default();
+    let a = app::App::new(config)?;
+    tokio::runtime::Runtime::new().unwrap().block_on(a.serve())?;
     Ok(())
 }

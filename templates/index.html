@@ -5,12 +5,13 @@
     <title>MeTube -> Index</title>
   </head>
   <body>
-    <div class="container">
-      <ul class="VideoList">
-        {% for user in users -%}
-        <li><a href="{{ user.url }}">{{ user.username }}</a></li>
-        {%- endfor %}
-      </ul>
-    </div>
+    <nav>
+      <a href="{{ url_for(name='upload', arg='') }}">Upload</a>
+    </nav>
+    <ul class="VideoList">
+      {% for video in videos -%}
+      <li><a href="{{ url_for(name='video', arg=video.id) }}">{{ video.title }}</a></li>
+      {%- endfor %}
+    </ul>
   </body>
 </html>

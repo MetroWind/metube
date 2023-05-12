@@ -16,3 +16,5 @@ toml = ">=0.5"
 time = { version = ">=0.3", features = ["formatting"] }
 r2d2 = ">=0.8"
 rusqlite = ">=0.29"
+futures-util = ">=0.3"
+bytes = ">=1"

@@ -3,6 +3,8 @@ use std::path::{PathBuf, Path};
 use std::collections::HashMap;
 use std::fs::File;
 
+use futures_util::TryStreamExt;
+use bytes::buf::Buf;
 use log::info;
 use log::error as log_error;
 use tera::Tera;
@@ -10,8 +12,9 @@ use warp::{Filter, Reply};
 use warp::http::status::StatusCode;
 use warp::reply::Response;
 
-use error::Error;
-use config::Configuration;
+use crate::error::Error;
+use crate::config::Configuration;
+use crate::data;
 
 trait ToResponse
 {
@@ -52,17 +55,39 @@ impl ToResponse for Result<Response, Error>
      }
 }
 
-fn handleIndex(templates: &Tera) -> Result<String, Error>
+fn handleIndex(data_manager: &data::Manager, templates: &Tera) ->
+    Result<String, Error>
 {
+    let videos = data_manager.getVideos(
+        "", 0, 1000, data::VideoOrder::NewFirst)?;
     let mut context = tera::Context::new();
-    context.insert("index", &videos);
-    let mut skills: Vec<&str> =
-        data.skills.keys().map(|k| k.as_ref()).collect();
-    skills.sort_unstable();
-    context.insert("skills", &skills);
-
+    context.insert("videos", &videos);
     templates.render("index.html", &context).map_err(
         |e| rterr!("Failed to render template index.html: {}", e))
+}
+
+fn handleUploadPage(templates: &Tera) -> Result<String, Error>
+{
+    templates.render("upload.html", &tera::Context::new()).map_err(
+        |e| rterr!("Failed to render template upload.html: {}", e))
+}
+
+async fn handleUpload(data: warp::multipart::FormData) ->
+    Result<String, warp::Rejection>
+{
+    println!("Handling upload...");
+    let field_names: Vec<_> = data.and_then(|mut field| async move {
+        let contents =
+            String::from_utf8_lossy(field.data().await.unwrap().unwrap().chunk())
+            .to_string();
+        Ok((
+            field.name().to_string(),
+            field.filename().unwrap().to_string(),
+            contents,
+        ))
+    }).try_collect().await.unwrap();
+
+    Ok::<_, warp::Rejection>(format!("{:?}", field_names))
 }
 
 fn urlEncode(s: &str) -> String
@@ -75,6 +100,9 @@ fn urlFor(name: &str, arg: &str) -> String
     match name
     {
         "index" => String::from("/"),
+        "video" => String::from("/v/") + arg,
+        "upload" => String::from("/upload/"),
+        "static" => String::from("/static/") + arg,
         _ => String::from("/"),
     }
 }
@@ -117,7 +145,7 @@ fn makeURLFor(serve_path: String) -> impl tera::Function
 
 pub struct App
 {
-    data: data::GameData,
+    data_manager: data::Manager,
     templates: Tera,
     config: Configuration,
 }
@@ -126,8 +154,9 @@ impl App
 {
     pub fn new(config: Configuration) -> Result<Self, Error>
     {
+        let db_path = Path::new(&config.data_dir).with_file_name("db");
         let mut result = Self {
-            data: data::GameData::default(),
+            data_manager: data::Manager::newWithFilename(&db_path),
             templates: Tera::default(),
             config,
         };
@@ -137,17 +166,8 @@ impl App
 
     fn init(&mut self) -> Result<(), Error>
     {
-        {
-            let data_path = Path::new(&self.config.data_dir)
-                .join("monster-data.xml");
-            let mut data_file = File::open(data_path).map_err(
-                |_| rterr!("Failed to open data file"))?;
-            let mut raw_data: Vec<u8> = Vec::new();
-            data_file.read_to_end(&mut raw_data).map_err(
-                |_| rterr!("Failed to read data file"))?;
-            self.data = GameData::fromXML(&raw_data)?;
-        }
-
+        self.data_manager.connect()?;
+        self.data_manager.init()?;
         let template_path = PathBuf::from(&self.config.data_dir)
             .join("templates").canonicalize()
             .map_err(|_| rterr!("Invalid template dir"))?
@@ -164,41 +184,39 @@ impl App
 
     pub async fn serve(self) -> Result<(), Error>
     {
-        let static_dir = PathBuf::from(&self.config.data_dir).join("static");
+        let static_dir = PathBuf::from(&self.config.static_dir);
         info!("Static dir is {}", static_dir.display());
         let statics = warp::path("static").and(warp::fs::dir(static_dir));
+        let statics = statics.or(warp::path("video").and(
+            warp::fs::dir(PathBuf::from(&self.config.video_dir))));
 
-        let data = self.data.clone();
+        let data_manager = self.data_manager.clone();
         let temp = self.templates.clone();
         let index = warp::path::end().map(move || {
-            handleIndex(&data, &temp).toResponse()
+            handleIndex(&data_manager, &temp).toResponse()
         });
 
-        let data = self.data.clone();
         let temp = self.templates.clone();
-        let family = warp::path("family").and(warp::path::param()).map(
-            move |param: String| {
-                handleFamily(param, &data, &temp).toResponse()
-            });
+        let upload_page = warp::path("upload").and(warp::path::end()).map(
+            move || handleUploadPage(&temp).toResponse()).with(warp::log("upload_page"));
 
-        let data = self.data.clone();
-        let temp = self.templates.clone();
-        let monster = warp::path("monster").and(warp::path::param()).map(
-            move |param: String| {
-                handleMonster(param, &data, &temp).toResponse()
-            });
+        let upload = warp::path("upload").and(warp::post())
+            .and(warp::multipart::form())
+            .and_then(|data: warp::multipart::FormData| async move {
+                handleUpload(data).await
+            }).with(warp::log("upload"));
 
-        let data = self.data.clone();
-        let temp = self.templates.clone();
-        let skill = warp::path("skill").and(warp::path::param()).map(
-            move |param: String| {
-                handleSkill(param, &data, &temp).toResponse()
-            });
+        // let data = self.data.clone();
+        // let temp = self.templates.clone();
+        // let family = warp::path("family").and(warp::path::param()).map(
+        //     move |param: String| {
+        //         handleFamily(param, &data, &temp).toResponse()
+        //     });
 
         let route = if self.config.serve_under_path == String::from("/") ||
             self.config.serve_under_path.is_empty()
         {
-            statics.or(index).or(family).or(monster).or(skill).boxed()
+            statics.or(index).or(upload_page).or(upload).boxed()
         }
         else
         {
@@ -213,7 +231,7 @@ impl App
             {
                 r = r.and(warp::path(seg.to_owned())).boxed();
             }
-            r.and(statics.or(index).or(family).or(monster).or(skill)).boxed()
+            r.and(statics.or(index).or(upload_page).or(upload)).boxed()
         };
 
         info!("Listening at {}:{}...", self.config.listen_address,

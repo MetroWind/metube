@@ -1,0 +1,17 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    {% include 'includes.html' %}
+    <script defer type="text/javascript" src="{{ url_for(name='static', arg='upload.js') }}"></script>
+    <title>MeTube -> Upload</title>
+  </head>
+  <body>
+    <form id="FormUpload">
+      <input id="FileToUpload" type="file" />
+      <div class="UploadStatus">
+        <div id="ProgressBar"></div>
+      </div>
+      <button type="button" onclick="postFile()">Upload File</button>
+    </form>
+  </body>
+</html>

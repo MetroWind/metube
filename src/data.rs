@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use rusqlite as sql;
@@ -15,13 +15,13 @@ pub enum VideoOrder
 }
 
 #[derive(Clone)]
-pub struct DataManager
+pub struct Manager
 {
     filename: sqlite_connection::Source,
     connection: Option<r2d2::Pool<sqlite_connection::Manager>>,
 }
 
-impl DataManager
+impl Manager
 {
     #[allow(dead_code)]
     pub fn new(f: sqlite_connection::Source) -> Self
@@ -29,14 +29,13 @@ impl DataManager
         Self { filename: f, connection: None }
     }
 
-    pub fn newWithFilename(f: &str) -> Result<Self, Error>
+    pub fn newWithFilename<P: AsRef<Path>>(f: P) -> Self
     {
-        Ok(Self {
+        Self {
             filename: sqlite_connection::Source::File(
-                std::path::PathBuf::from_str(f).map_err(
-                    |_| rterr!("Invalid database path: {}", f))?),
-            connection: None
-        })
+                std::path::PathBuf::from(f.as_ref())),
+            connection: None,
+        }
     }
 
     fn confirmConnection(&self) ->
@@ -82,20 +81,17 @@ impl DataManager
     pub fn init(&self) -> Result<(), Error>
     {
         let conn = self.confirmConnection()?;
-        if !self.tableExists("user")?
-        {
-            conn.execute(
-                "CREATE TABLE videos (
-                  id TEXT PRIMARY KEY,
-                  path TEXT UNIQUE,
-                  title TEXT,
-                  desc TEXT,
-                  artist TEXT,
-                  views INTEGER,
-                  upload_time INTEGER
-                  );", []).map_err(
-                |e| error!(DataError, "Failed to create table: {}", e))?;
-        }
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS videos (
+             id TEXT PRIMARY KEY,
+             path TEXT UNIQUE,
+             title TEXT,
+             desc TEXT,
+             artist TEXT,
+             views INTEGER,
+             upload_time INTEGER
+             );", []).map_err(
+            |e| error!(DataError, "Failed to create table: {}", e))?;
         Ok(())
     }
 
@@ -203,7 +199,7 @@ mod tests
     #[test]
     fn addAndGetVideo() -> Result<(), Error>
     {
-        let mut data = DataManager::new(sqlite_connection::Source::Memory);
+        let mut data = Manager::new(sqlite_connection::Source::Memory);
         data.connect()?;
         data.init()?;
         data.addVideo(&Video::fromFile("/dev/null")?)?;

@@ -18,6 +18,8 @@ fn defaultListenPort() -> u16 { 8080 }
 pub struct Configuration
 {
     pub video_dir: String,
+    pub static_dir: String,
+    pub data_dir: String,
     #[serde(default = "defaultListenAddr")]
     pub listen_address: String,
     #[serde(default = "defaultListenPort")]
@@ -43,6 +45,8 @@ impl Default for Configuration
     {
         Self {
             video_dir: String::from("."),
+            static_dir: String::from("static"),
+            data_dir: String::from("."),
             listen_address: defaultListenAddr(),
             listen_port: defaultListenPort(),
             serve_under_path: defaultServePath(),

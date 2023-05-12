@@ -7,7 +7,7 @@ use crate::error::Error;
 pub struct Video
 {
     pub id: String,
-    /// Full path of the video
+    /// Relative path of the video, from the library path.
     pub path: PathBuf,
     pub title: String,
     pub desc: String,
@@ -23,10 +23,6 @@ impl Video
     pub fn fromFile<P: AsRef<Path>>(f: P) -> Result<Self, Error>
     {
         let p: &Path = f.as_ref();
-        if !p.exists()
-        {
-            return Err(rterr!("Video file not found: {:?}", p));
-        }
         Ok(Self {
             id: String::new(),
             path: p.canonicalize().map_err(
@@ -37,6 +33,11 @@ impl Video
             views: 0,
             upload_time: time::OffsetDateTime::UNIX_EPOCH,
         })
+    }
+
+    pub fn category(&self) -> &Path
+    {
+        self.path.parent().unwrap()
     }
 }
 
