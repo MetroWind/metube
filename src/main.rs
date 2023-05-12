@@ -18,6 +18,7 @@ use config::Configuration;
 
 fn main() -> Result<(), Error>
 {
+    env_logger::init();
     // let opts = clap::Command::new("Breed web")
     //     .about("Dragon Warrior: Monsters 2 breed database web server")
     //     .arg(clap::Arg::new("serve-path")

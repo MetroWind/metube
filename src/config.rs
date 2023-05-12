@@ -14,6 +14,8 @@ fn defaultServePath() -> String
 
 fn defaultListenPort() -> u16 { 8080 }
 
+fn defaultUploadSizeMax() -> u64 { 10 * 1024 * 1024 * 1024 }
+
 #[derive(Deserialize, Clone)]
 pub struct Configuration
 {
@@ -26,6 +28,8 @@ pub struct Configuration
     pub listen_port: u16,
     #[serde(default = "defaultServePath")]
     pub serve_under_path: String,
+    #[serde(default = "defaultUploadSizeMax")]
+    pub upload_size_max: u64,
 }
 
 impl Configuration
@@ -50,6 +54,7 @@ impl Default for Configuration
             listen_address: defaultListenAddr(),
             listen_port: defaultListenPort(),
             serve_under_path: defaultServePath(),
+            upload_size_max: defaultUploadSizeMax(),
         }
     }
 }

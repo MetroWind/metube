@@ -77,6 +77,7 @@ async fn handleUpload(data: warp::multipart::FormData) ->
 {
     println!("Handling upload...");
     let field_names: Vec<_> = data.and_then(|mut field| async move {
+        info!("Got chunk?");
         let contents =
             String::from_utf8_lossy(field.data().await.unwrap().unwrap().chunk())
             .to_string();
@@ -86,8 +87,7 @@ async fn handleUpload(data: warp::multipart::FormData) ->
             contents,
         ))
     }).try_collect().await.unwrap();
-
-    Ok::<_, warp::Rejection>(format!("{:?}", field_names))
+    Ok::<_, warp::Rejection>(String::from("OK"))
 }
 
 fn urlEncode(s: &str) -> String
@@ -186,25 +186,27 @@ impl App
     {
         let static_dir = PathBuf::from(&self.config.static_dir);
         info!("Static dir is {}", static_dir.display());
-        let statics = warp::path("static").and(warp::fs::dir(static_dir));
-        let statics = statics.or(warp::path("video").and(
+        let statics = warp::get().and(warp::path("static"))
+            .and(warp::fs::dir(static_dir));
+        let statics = statics.or(warp::get().and(warp::path("video")).and(
             warp::fs::dir(PathBuf::from(&self.config.video_dir))));
 
         let data_manager = self.data_manager.clone();
         let temp = self.templates.clone();
-        let index = warp::path::end().map(move || {
+        let index = warp::get().and(warp::path::end()).map(move || {
             handleIndex(&data_manager, &temp).toResponse()
         });
 
         let temp = self.templates.clone();
-        let upload_page = warp::path("upload").and(warp::path::end()).map(
-            move || handleUploadPage(&temp).toResponse()).with(warp::log("upload_page"));
+        let upload_page = warp::get().and(warp::path("upload"))
+            .and(warp::path::end()).map(
+                move || handleUploadPage(&temp).toResponse());
 
-        let upload = warp::path("upload").and(warp::post())
-            .and(warp::multipart::form())
+        let upload = warp::post().and(warp::path("upload"))
+            .and(warp::multipart::form().max_length(self.config.upload_size_max))
             .and_then(|data: warp::multipart::FormData| async move {
                 handleUpload(data).await
-            }).with(warp::log("upload"));
+            });
 
         // let data = self.data.clone();
         // let temp = self.templates.clone();
@@ -237,7 +239,7 @@ impl App
         info!("Listening at {}:{}...", self.config.listen_address,
               self.config.listen_port);
 
-        warp::serve(warp::get().and(route)).run(
+        warp::serve(route).run(
             std::net::SocketAddr::new(
                 self.config.listen_address.parse().map_err(
                     |_| rterr!("Invalid listen address: {}",
