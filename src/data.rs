@@ -6,7 +6,7 @@ use rusqlite::OptionalExtension;
 
 use crate::error;
 use crate::error::Error as Error;
-use crate::video::Video;
+use crate::video::{Video, ContainerType};
 use crate::sqlite_connection;
 
 pub enum VideoOrder
@@ -89,7 +89,8 @@ impl Manager
              desc TEXT,
              artist TEXT,
              views INTEGER,
-             upload_time INTEGER
+             upload_time INTEGER,
+             container_type TEXT
              );", []).map_err(
             |e| error!(DataError, "Failed to create table: {}", e))?;
         Ok(())
@@ -99,6 +100,7 @@ impl Manager
     {
         let time_value = row.get(6)?;
         let path: String = row.get(1)?;
+        let ext: String = row.get(7)?;
         Ok(Video {
             id: row.get(0)?,
             path: PathBuf::from_str(&path).unwrap(),
@@ -110,6 +112,11 @@ impl Manager
                 time_value).map_err(
                 |_| sql::Error::IntegralValueOutOfRange(
                     6, time_value))?,
+            container_type: ContainerType::fromExtension(&ext)
+                .ok_or_else(|| sql::Error::FromSqlConversionFailure(
+                    7, sql::types::Type::Text,
+                    Box::new(rterr!("Invalid extension name from database: {}",
+                                    ext))))?,
         })
     }
 
@@ -118,7 +125,7 @@ impl Manager
         let conn = self.confirmConnection()?;
         let row_count = conn.execute(
             "INSERT INTO videos (id, path, title, desc, artist, views,
-                                 upload_time) VALUES
+                                 upload_time, container_type) VALUES
              (?, ?, ?, ?, ?, 0, ?);", sql::params![
                  &vid.id,
                  &vid.path.to_str().ok_or_else(
@@ -126,8 +133,9 @@ impl Manager
                  &vid.title,
                  &vid.desc,
                  &vid.artist,
-                 vid.upload_time.unix_timestamp()])
-            .map_err(|e| error!(DataError, "Failed to add video: {}", e))?;
+                 vid.upload_time.unix_timestamp(),
+                 vid.container_type.toExtension(),
+             ]).map_err(|e| error!(DataError, "Failed to add video: {}", e))?;
         if row_count != 1
         {
             return Err(error!(DataError, "Invalid insert happened"));
@@ -139,7 +147,7 @@ impl Manager
     {
         let conn = self.confirmConnection()?;
         conn.query_row("SELECT id, path, title, desc, artist, views,
-                        upload_time FROM videos WHERE id=?;",
+                        upload_time, container_type FROM videos WHERE id=?;",
                        sql::params![id], Self::row2Video)
 
             .optional().map_err(
@@ -178,8 +186,9 @@ impl Manager
         };
 
         let mut cmd = conn.prepare(
-            &format!("SELECT id, path, title, desc, artist, views, upload_time
-                      FROM videos {} LIMIT ? OFFSET ?;", order_expr))
+            &format!("SELECT id, path, title, desc, artist, views, upload_time,
+                      container_type FROM videos {} LIMIT ? OFFSET ?;",
+                     order_expr))
             .map_err(|e| error!(
                 DataError,
                 "Failed to compare statement to get videos: {}", e))?;
@@ -202,10 +211,10 @@ mod tests
         let mut data = Manager::new(sqlite_connection::Source::Memory);
         data.connect()?;
         data.init()?;
-        data.addVideo(&Video::fromFile("/dev/null")?)?;
+        data.addVideo(&Video::fromFile("/dev/null", "/")?)?;
         let videos = data.getVideos("", 0, 1000, VideoOrder::NewFirst)?;
         assert_eq!(videos.len(), 1);
-        assert_eq!(videos[0].path.to_str().unwrap(), "/dev/null");
+        assert_eq!(videos[0].path.to_str().unwrap(), "dev/null");
         Ok(())
     }
 }

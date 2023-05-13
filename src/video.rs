@@ -9,21 +9,41 @@ use regex::Regex;
 
 use crate::error::Error;
 
-pub enum Type
+pub enum ContainerType
 {
-    Mp3, Mp4, WebP,
+    Mp4, WebM, Mkv,
 }
 
-impl Type
+impl ContainerType
 {
     pub fn fromExtension(ext: &str) -> Option<Self>
     {
         match ext.to_ascii_lowercase().as_str()
         {
-            "mp3" => Some(Self::Mp3),
             "mp4" => Some(Self::Mp4),
-            "webp" => Some(Self::WebP),
+            "webm" => Some(Self::WebM),
+            "mkv" => Some(Self::Mkv),
             _ => None,
+        }
+    }
+
+    pub fn fromFormatName(name: &str) -> Option<Self>
+    {
+        match name
+        {
+            "mov,mp4,m4a,3gp,3g2,mj2" => Some(Self::Mp4),
+            "matroska,webm" => Some(Self::WebM),
+            _ => None,
+        }
+    }
+
+    pub fn toExtension(&self) -> &str
+    {
+        match self
+        {
+            Self::Mp4 => "mp4",
+            Self::WebM => "webm",
+            Self::Mkv => "mkv",
         }
     }
 }
@@ -94,6 +114,7 @@ pub struct Video
     pub views: u32,
     /// This should always be in UTC.
     pub upload_time: time::OffsetDateTime,
+    pub container_type: ContainerType,
 }
 
 fn probeVideo(f: &Path) -> Result<Vec<ProbedMetadataSection>, Error>
@@ -116,12 +137,22 @@ fn probeVideo(f: &Path) -> Result<Vec<ProbedMetadataSection>, Error>
 }
 
 fn fillProbedMetadata(mut video: Video, metadata: Vec<ProbedMetadataSection>) ->
-    Video
+    Result<Video, Error>
 {
     for section in metadata
     {
         if section.name == "FORMAT"
         {
+            if let Some(value) = section.metadata.get("format_name")
+            {
+                video.container_type = ContainerType::fromFormatName(value)
+                    .ok_or_else(|| rterr!("Unsupported format_name: {}",
+                                          value))?;
+            }
+            else
+            {
+                return Err(rterr!("format_name not found"));
+            }
             if let Some(value) = section.metadata.get("TAG:title")
             {
                 video.title = value.clone();
@@ -136,7 +167,7 @@ fn fillProbedMetadata(mut video: Video, metadata: Vec<ProbedMetadataSection>) ->
             }
         }
     }
-    video
+    Ok(video)
 }
 
 impl Video
@@ -165,8 +196,9 @@ impl Video
             artist: String::new(),
             views: 0,
             upload_time: time::OffsetDateTime::UNIX_EPOCH,
+            container_type: ContainerType::Mp4,
         };
-        Ok(fillProbedMetadata(video, metadata))
+        fillProbedMetadata(video, metadata)
     }
 
     pub fn category(&self) -> &Path
@@ -199,6 +231,8 @@ impl Serialize for Video
         state.serialize_field(
             "upload_time_utc_str", &self.upload_time.format(&format).map_err(
                 |_| serde::ser::Error::custom("Invalid upload time"))?)?;
+        state.serialize_field(
+            "container_type", &self.container_type.toExtension())?;
         state.end()
     }
 }
