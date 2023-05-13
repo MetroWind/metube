@@ -133,7 +133,7 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
     {
         return Ok(Err(rterr!("Failed to rename temp file: {}", e)));
     }
-    Ok(Video::fromFile(video_file.file_name().unwrap()))
+    Ok(Video::fromFile(video_file.file_name().unwrap(), &config.video_dir))
 }
 
 async fn handleUpload(data: warp::multipart::FormData,
@@ -218,7 +218,7 @@ impl App
 {
     pub fn new(config: Configuration) -> Result<Self, Error>
     {
-        let db_path = Path::new(&config.data_dir).with_file_name("db");
+        let db_path = Path::new(&config.data_dir).with_file_name("db.sqlite");
         let mut result = Self {
             data_manager: data::Manager::newWithFilename(&db_path),
             templates: Tera::default(),

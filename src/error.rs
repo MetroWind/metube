@@ -38,6 +38,7 @@ pub enum Error
     /// backlinks.
     DataError(String),
     RuntimeError(String),
+    HTTPStatus(u16),
 }
 
 impl fmt::Display for Error
@@ -48,6 +49,7 @@ impl fmt::Display for Error
         {
             Error::DataError(msg) => write!(f, "Data error: {}", msg),
             Error::RuntimeError(msg) => write!(f, "Runtime error: {}", msg),
+            Error::HTTPStatus(c) => write!(f, "HTTP status code {}", c),
         }
     }
 }
