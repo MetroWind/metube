@@ -1,3 +1,12 @@
+const url = new URL(window.location.href);
+let match = url.pathname.match(new RegExp("^(/.*)?/upload/?$", "i"));
+console.log(match);
+var serve_prefix = "";
+if(match !== null && match[1] !== undefined)
+{
+    serve_prefix = match[1];
+}
+
 function postFile() {
     var formdata = new FormData();
     formdata.append('FileToUpload', document.getElementById('FileToUpload').files[0]);
@@ -18,7 +27,7 @@ function postFile() {
         }
     });
 
-    request.open('post', '/upload/');
+    request.open('post', serve_prefix + '/upload/');
     request.timeout = 45000;
     request.send(formdata);
 }

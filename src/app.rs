@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::io::prelude::*;
 use std::io::BufWriter;
 use std::fs::File;
+use std::ffi::OsStr;
 
 use futures_util::TryStreamExt;
 use futures_util::StreamExt;
@@ -13,10 +14,12 @@ use tera::Tera;
 use warp::{Filter, Reply};
 use warp::http::status::StatusCode;
 use warp::reply::Response;
+use sha2::Digest;
 
 use crate::error::Error;
 use crate::config::Configuration;
 use crate::data;
+use crate::video::Video;
 
 trait ToResponse
 {
@@ -87,41 +90,63 @@ fn randomTempFilename<P: AsRef<Path>>(dir: P) -> PathBuf
     }
 }
 
+async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
+    -> Result<Result<Video, Error>, warp::Error>
+{
+    if part.filename().is_none()
+    {
+        return Ok(Err(Error::HTTPStatus(400)));
+    }
+    let filename = PathBuf::from(part.filename().unwrap());
+    let temp_file = randomTempFilename(&config.video_dir);
+    let mut f = match File::create(&temp_file)
+    {
+        Ok(f) => BufWriter::new(f),
+        Err(e) => {
+            return Ok(Err(rterr!("Failed to open temp file: {}", e)));
+        },
+    };
+    let mut hasher = sha2::Sha256::new();
+    let mut buffers = part.stream();
+    while let Some(buffer) = buffers.next().await
+    {
+        let mut buffer = buffer?;
+        while buffer.has_remaining()
+        {
+            let bytes = buffer.chunk();
+            hasher.update(bytes);
+            if let Err(e) = f.write_all(bytes)
+            {
+                return Ok(Err(rterr!("Failed to write temp file: {}", e)));
+            }
+            buffer.advance(bytes.len());
+        }
+    }
+    let ext = filename.extension().or(Some(OsStr::new(""))).unwrap();
+    let hash = hasher.finalize();
+    let byte_strs: Vec<_> = hash[..6].iter().map(|b| format!("{:02x}", b))
+        .collect();
+    let id = byte_strs.join("");
+    let video_file: PathBuf = Path::new(&config.video_dir).join(id)
+        .with_extension(ext);
+    if let Err(e) = std::fs::rename(temp_file, &video_file)
+    {
+        return Ok(Err(rterr!("Failed to rename temp file: {}", e)));
+    }
+    Ok(Video::fromFile(video_file.file_name().unwrap()))
+}
+
 async fn handleUpload(data: warp::multipart::FormData,
                       config: &Configuration) ->
     Result<String, warp::Rejection>
 {
     println!("Handling upload...");
     let parts: Vec<_> = data.and_then(
-        |mut part| async move {
-            let mut f = match File::create(
-                randomTempFilename(&config.video_dir))
-            {
-                Ok(f) => BufWriter::new(f),
-                Err(e) => {
-                    log_error!("Oops...");
-                    return Ok(Some(format!("Failed to open temp file: {}", e)));
-                },
-            };
-            let mut buffers = part.stream();
-            while let Some(buffer) = buffers.next().await
-            {
-                let mut buffer = buffer?;
-                while buffer.has_remaining()
-                {
-                    let bytes = buffer.chunk();
-                    if let Err(e) = f.write_all(bytes)
-                    {
-                        return Ok(Some(format!("Failed to write chunk: {}", e)));
-                    }
-                    buffer.advance(bytes.len());
-                }
-            }
-            Ok(None)
-        }).try_collect().await.map_err(|e| warp::reject::reject())?;
+        |mut part| async move { videoFromPart(part, config).await })
+        .try_collect().await.map_err(|e| warp::reject::reject())?;
     for part in parts
     {
-        if let Some(msg) = part
+        if let Err(_) = part
         {
             return Err(warp::reject::reject());
         }

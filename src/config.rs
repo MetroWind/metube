@@ -26,6 +26,8 @@ pub struct Configuration
     pub listen_address: String,
     #[serde(default = "defaultListenPort")]
     pub listen_port: u16,
+    /// Must starts with `/`, and does not end with `/`, unless it’s
+    /// just `/`.
     #[serde(default = "defaultServePath")]
     pub serve_under_path: String,
     #[serde(default = "defaultUploadSizeMax")]
