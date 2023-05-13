@@ -1,0 +1,21 @@
+<!DOCTYPE HTML>
+<html>
+  <head>
+    {% include 'includes.html' %}
+    <title>MeTube -> {{ video.title }}</title>
+  </head>
+  <body>
+    <nav>
+      <a href="{{ url_for(name='upload', arg='') }}">Upload</a>
+    </nav>
+    <div class="VideoWrapper">
+      <video class="VideoPlayer" controls>
+        <source src="{{ url_for(name='video_file', arg='video.path') }}"
+                type="{{ video.content_type }}" />
+      </video>
+    </div>
+    <div>
+      <h2>{{ video.title }}</h2>
+    </div>
+  </body>
+</html>

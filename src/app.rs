@@ -71,6 +71,17 @@ fn handleIndex(data_manager: &data::Manager, templates: &Tera) ->
         |e| rterr!("Failed to render template index.html: {}", e))
 }
 
+fn handleVideo(id: String, data_manager: &data::Manager, templates: &Tera) ->
+    Result<String, Error>
+{
+    let video = data_manager.findVideoByID(&id).map_err(
+        |_| Error::HTTPStatus(404))?;
+    let mut context = tera::Context::new();
+    context.insert("video", &video);
+    templates.render("video.html", &context).map_err(
+        |e| rterr!("Failed to render template video.html: {}", e))
+}
+
 fn handleUploadPage(templates: &Tera) -> Result<String, Error>
 {
     templates.render("upload.html", &tera::Context::new()).map_err(
@@ -133,24 +144,27 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
     {
         return Ok(Err(rterr!("Failed to rename temp file: {}", e)));
     }
+    info!("Returning a video...");
     Ok(Video::fromFile(video_file.file_name().unwrap(), &config.video_dir))
 }
 
-async fn handleUpload(data: warp::multipart::FormData,
+async fn handleUpload(form_data: warp::multipart::FormData,
+                      data_manager: &data::Manager,
                       config: &Configuration) ->
     Result<String, warp::Rejection>
 {
-    println!("Handling upload...");
-    let parts: Vec<_> = data.and_then(
-        |mut part| async move { videoFromPart(part, config).await })
-        .try_collect().await.map_err(|e| warp::reject::reject())?;
+    info!("Handling upload...");
+    let parts: Vec<_> = form_data.and_then(
+        |part| async move { videoFromPart(part, config).await })
+        .try_collect().await.map_err(|_| warp::reject::reject())?;
     for part in parts
     {
-        if let Err(_) = part
-        {
-            return Err(warp::reject::reject());
-        }
+        let v = part.map_err(|_| warp::reject::reject())?;
+        info!("Adding video...");
+        data_manager.addVideo(&v).map_err(|_| warp::reject::reject())?;
+        break;
     }
+    info!("Handled upload.");
     Ok::<_, warp::Rejection>(String::from("OK"))
 }
 
@@ -167,6 +181,7 @@ fn urlFor(name: &str, arg: &str) -> String
         "video" => String::from("/v/") + arg,
         "upload" => String::from("/upload/"),
         "static" => String::from("/static/") + arg,
+        "video_file" => String::from("/video/") + arg,
         _ => String::from("/"),
     }
 }
@@ -261,18 +276,27 @@ impl App
             handleIndex(&data_manager, &temp).toResponse()
         });
 
+        let data_manager = self.data_manager.clone();
+        let temp = self.templates.clone();
+        let video = warp::get().and(warp::path("v")).and(warp::path::param())
+            .and(warp::path::end()).map(move |id: String| {
+            handleVideo(id, &data_manager, &temp).toResponse()
+        });
+
         let temp = self.templates.clone();
         let upload_page = warp::get().and(warp::path("upload"))
             .and(warp::path::end()).map(
                 move || handleUploadPage(&temp).toResponse());
 
         let config = self.config.clone();
+        let data_manager = self.data_manager.clone();
         let upload = warp::post().and(warp::path("upload"))
             .and(warp::multipart::form().max_length(self.config.upload_size_max))
             .and_then(move |data: warp::multipart::FormData| {
                 let config = config.clone();
+                let data_manager = data_manager.clone();
                 async move {
-                    handleUpload(data, &config).await
+                    handleUpload(data, &data_manager, &config).await
                 }
             });
 
@@ -286,7 +310,7 @@ impl App
         let route = if self.config.serve_under_path == String::from("/") ||
             self.config.serve_under_path.is_empty()
         {
-            statics.or(index).or(upload_page).or(upload).boxed()
+            statics.or(index).or(video).or(upload_page).or(upload).boxed()
         }
         else
         {
@@ -301,7 +325,8 @@ impl App
             {
                 r = r.and(warp::path(seg.to_owned())).boxed();
             }
-            r.and(statics.or(index).or(upload_page).or(upload)).boxed()
+            r.and(statics.or(index).or(video).or(upload_page).or(upload))
+                .boxed()
         };
 
         info!("Listening at {}:{}...", self.config.listen_address,

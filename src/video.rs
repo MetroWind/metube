@@ -11,7 +11,7 @@ use crate::error::Error;
 
 pub enum ContainerType
 {
-    Mp4, WebM, Mkv,
+    Mp4, WebM
 }
 
 impl ContainerType
@@ -22,7 +22,6 @@ impl ContainerType
         {
             "mp4" => Some(Self::Mp4),
             "webm" => Some(Self::WebM),
-            "mkv" => Some(Self::Mkv),
             _ => None,
         }
     }
@@ -43,7 +42,15 @@ impl ContainerType
         {
             Self::Mp4 => "mp4",
             Self::WebM => "webm",
-            Self::Mkv => "mkv",
+        }
+    }
+
+    pub fn contentType(&self) -> &str
+    {
+        match self
+        {
+            Self::Mp4 => "video/mp4",
+            Self::WebM => "video/webm",
         }
     }
 }
@@ -214,7 +221,7 @@ impl Serialize for Video
         S: Serializer,
     {
         // 3 is the number of fields in the struct.
-        let mut state = serializer.serialize_struct("Video", 8)?;
+        let mut state = serializer.serialize_struct("Video", 9)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field(
             "path", &self.path.to_str().ok_or_else(
@@ -233,6 +240,8 @@ impl Serialize for Video
                 |_| serde::ser::Error::custom("Invalid upload time"))?)?;
         state.serialize_field(
             "container_type", &self.container_type.toExtension())?;
+        state.serialize_field(
+            "content_type", &self.container_type.contentType())?;
         state.end()
     }
 }
