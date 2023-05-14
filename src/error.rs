@@ -1,6 +1,8 @@
 use std::error::Error as StdError;
 use std::fmt;
 
+use warp::http::status::StatusCode;
+
 #[macro_export]
 macro_rules! error
 {
@@ -38,7 +40,7 @@ pub enum Error
     /// backlinks.
     DataError(String),
     RuntimeError(String),
-    HTTPStatus(u16),
+    HTTPStatus(StatusCode, String),
 }
 
 impl fmt::Display for Error
@@ -49,7 +51,8 @@ impl fmt::Display for Error
         {
             Error::DataError(msg) => write!(f, "Data error: {}", msg),
             Error::RuntimeError(msg) => write!(f, "Runtime error: {}", msg),
-            Error::HTTPStatus(c) => write!(f, "HTTP status code {}", c),
+            Error::HTTPStatus(c, msg) =>
+                write!(f, "HTTP status with code {}: {}", c, msg),
         }
     }
 }
@@ -57,4 +60,22 @@ impl fmt::Display for Error
 impl StdError for Error
 {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {None}
+}
+
+impl warp::reply::Reply for Error
+{
+    fn into_response(self) -> warp::reply::Response
+    {
+        match self
+        {
+            Error::DataError(_) => warp::reply::with_status(
+                self.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
+                .into_response(),
+            Error::RuntimeError(_) => warp::reply::with_status(
+                self.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
+                .into_response(),
+            Error::HTTPStatus(c, _) => warp::reply::with_status(
+                self.to_string(), c).into_response(),
+        }
+    }
 }

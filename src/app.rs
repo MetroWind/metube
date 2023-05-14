@@ -13,7 +13,8 @@ use log::error as log_error;
 use tera::Tera;
 use warp::{Filter, Reply};
 use warp::http::status::StatusCode;
-use warp::reply::Response;
+use warp::reply::{Response, Html};
+use warp::reject::Reject;
 use sha2::Digest;
 
 use crate::error::Error;
@@ -35,9 +36,7 @@ impl ToResponse for Result<String, Error>
             Ok(s) => warp::reply::html(s).into_response(),
             Err(e) => {
                 log_error!("{}", e);
-                warp::reply::with_status(
-                e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
-                    .into_response()
+                e.into_response()
             },
         }
     }
@@ -49,33 +48,32 @@ impl ToResponse for Result<Response, Error>
     {
         match self
         {
-            Ok(s) => s.into_response(),
+            Ok(s) => s,
             Err(e) => {
                 log_error!("{}", e);
-                warp::reply::with_status(
-                e.to_string(), StatusCode::INTERNAL_SERVER_ERROR)
-                    .into_response()
+                e.into_response()
             }
         }
      }
 }
 
 fn handleIndex(data_manager: &data::Manager, templates: &Tera) ->
-    Result<String, Error>
+    Result<Response, Error>
 {
     let videos = data_manager.getVideos(
         "", 0, 1000, data::VideoOrder::NewFirst)?;
     let mut context = tera::Context::new();
     context.insert("videos", &videos);
-    templates.render("index.html", &context).map_err(
-        |e| rterr!("Failed to render template index.html: {}", e))
+    Ok(warp::reply::html(templates.render("index.html", &context).map_err(
+        |e| rterr!("Failed to render template index.html: {}", e))?)
+       .into_response())
 }
 
 fn handleVideo(id: String, data_manager: &data::Manager, templates: &Tera) ->
     Result<String, Error>
 {
-    let video = data_manager.findVideoByID(&id).map_err(
-        |_| Error::HTTPStatus(404))?;
+    let video = data_manager.findVideoByID(&id).map_err(|_| Error::HTTPStatus(
+        StatusCode::NOT_FOUND, format!("Video {} not found", id)))?;
     let mut context = tera::Context::new();
     context.insert("video", &video);
     templates.render("video.html", &context).map_err(
@@ -106,7 +104,8 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
 {
     if part.filename().is_none()
     {
-        return Ok(Err(Error::HTTPStatus(400)));
+        return Ok(Err(Error::HTTPStatus(
+            StatusCode::BAD_REQUEST, String::from("No filename in upload"))));
     }
     let filename = PathBuf::from(part.filename().unwrap());
     let temp_file = randomTempFilename(&config.video_dir);
@@ -118,6 +117,7 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
         },
     };
     let mut hasher = sha2::Sha256::new();
+    let orig_name: Option<String> = part.filename().map(|n| n.to_owned());
     let mut buffers = part.stream();
     while let Some(buffer) = buffers.next().await
     {
@@ -140,12 +140,20 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
     let id = byte_strs.join("");
     let video_file: PathBuf = Path::new(&config.video_dir).join(id)
         .with_extension(ext);
+    debug!("Moving video {:?} --> {:?}...", temp_file, video_file);
     if let Err(e) = std::fs::rename(temp_file, &video_file)
     {
         return Ok(Err(rterr!("Failed to rename temp file: {}", e)));
     }
-    info!("Returning a video...");
-    Ok(Video::fromFile(video_file.file_name().unwrap(), &config.video_dir))
+    let video = Video::fromFile(video_file.file_name().unwrap(),
+                                &config.video_dir).map(
+        |v| {
+            let mut video = v;
+            video.original_filename = orig_name.or(Some(String::new())).unwrap();
+            video.upload_time = time::OffsetDateTime::now_utc();
+            video
+        });
+    Ok(video)
 }
 
 async fn handleUpload(form_data: warp::multipart::FormData,
@@ -153,20 +161,32 @@ async fn handleUpload(form_data: warp::multipart::FormData,
                       config: &Configuration) ->
     Result<String, warp::Rejection>
 {
-    info!("Handling upload...");
     let parts: Vec<_> = form_data.and_then(
         |part| async move { videoFromPart(part, config).await })
-        .try_collect().await.map_err(|_| warp::reject::reject())?;
+        .try_collect().await.map_err(|e| {
+            log_error!("Failed to collect video: {}", e);
+            warp::reject::reject()
+        })?;
     for part in parts
     {
-        let v = part.map_err(|_| warp::reject::reject())?;
-        info!("Adding video...");
-        data_manager.addVideo(&v).map_err(|_| warp::reject::reject())?;
+        let v = part.map_err(|e| {
+            log_error!("Failed to deal with part: {}", e);
+            warp::reject::reject()
+        })?;
+        data_manager.addVideo(&v).map_err(|e| {
+            log_error!("Failed to add video: {}", e);
+            warp::reject::reject()
+        })?;
         break;
     }
-    info!("Handled upload.");
     Ok::<_, warp::Rejection>(String::from("OK"))
 }
+
+// fn handleLogin(data_manager: &data::Manager) -> Result<Response, Error>
+// {
+//     warp::http::Response::builder().status(StatusCode::UNAUTHORIZED)
+//         .header("WWW-Authenticate", "Digest")
+// }
 
 fn urlEncode(s: &str) -> String
 {

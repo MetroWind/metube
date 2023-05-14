@@ -122,6 +122,8 @@ pub struct Video
     /// This should always be in UTC.
     pub upload_time: time::OffsetDateTime,
     pub container_type: ContainerType,
+    /// The original filename from user upload. May be empty.
+    pub original_filename: String,
 }
 
 fn probeVideo(f: &Path) -> Result<Vec<ProbedMetadataSection>, Error>
@@ -185,6 +187,8 @@ impl Video
         let p: &Path = f.as_ref();
         let full_path = p.canonicalize().map_err(
             |e| rterr!("Failed to canonicalize path {:?}: {}", p, e))?;
+        let video_dir = Path::new(video_dir).canonicalize().map_err(
+            |e| rterr!("Failed to canonicalize path {:?}: {}", video_dir, e))?;
         if !full_path.exists()
         {
             return Err(rterr!("Video not found: {:?}", f));
@@ -204,6 +208,9 @@ impl Video
             views: 0,
             upload_time: time::OffsetDateTime::UNIX_EPOCH,
             container_type: ContainerType::Mp4,
+            original_filename: p.file_name().ok_or_else(
+                || rterr!("Invalid video path without file name"))?.to_str()
+                .ok_or_else(|| rterr!("Invalid video path"))?.to_owned(),
         };
         fillProbedMetadata(video, metadata)
     }
@@ -211,6 +218,18 @@ impl Video
     pub fn category(&self) -> &Path
     {
         self.path.parent().unwrap()
+    }
+
+    pub fn displayTitle(&self) -> &str
+    {
+        if self.title.is_empty()
+        {
+            &self.original_filename
+        }
+        else
+        {
+            &self.title
+        }
     }
 }
 
@@ -226,7 +245,7 @@ impl Serialize for Video
         state.serialize_field(
             "path", &self.path.to_str().ok_or_else(
                 || serde::ser::Error::custom("Invalid path"))?)?;
-        state.serialize_field("title", &self.title)?;
+        state.serialize_field("title", self.displayTitle())?;
         state.serialize_field("desc", &self.desc)?;
         state.serialize_field("artist", &self.artist)?;
         state.serialize_field("views", &self.views)?;

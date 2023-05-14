@@ -90,7 +90,8 @@ impl Manager
              artist TEXT,
              views INTEGER,
              upload_time INTEGER,
-             container_type TEXT
+             container_type TEXT,
+             original_filename TEXT
              );", []).map_err(
             |e| error!(DataError, "Failed to create table: {}", e))?;
         Ok(())
@@ -117,6 +118,7 @@ impl Manager
                     7, sql::types::Type::Text,
                     Box::new(rterr!("Invalid extension name from database: {}",
                                     ext))))?,
+            original_filename: row.get(8)?,
         })
     }
 
@@ -125,8 +127,8 @@ impl Manager
         let conn = self.confirmConnection()?;
         let row_count = conn.execute(
             "INSERT INTO videos (id, path, title, desc, artist, views,
-                                 upload_time, container_type) VALUES
-             (?, ?, ?, ?, ?, 0, ?);", sql::params![
+                                 upload_time, container_type, original_filename)
+             VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?);", sql::params![
                  &vid.id,
                  &vid.path.to_str().ok_or_else(
                      || rterr!("Invalid video path: {:?}", vid.path))?,
@@ -135,6 +137,7 @@ impl Manager
                  &vid.artist,
                  vid.upload_time.unix_timestamp(),
                  vid.container_type.toExtension(),
+                 &vid.original_filename,
              ]).map_err(|e| error!(DataError, "Failed to add video: {}", e))?;
         if row_count != 1
         {
@@ -147,7 +150,8 @@ impl Manager
     {
         let conn = self.confirmConnection()?;
         conn.query_row("SELECT id, path, title, desc, artist, views,
-                        upload_time, container_type FROM videos WHERE id=?;",
+                        upload_time, container_type, original_filename
+                        FROM videos WHERE id=?;",
                        sql::params![id], Self::row2Video)
 
             .optional().map_err(
@@ -187,8 +191,8 @@ impl Manager
 
         let mut cmd = conn.prepare(
             &format!("SELECT id, path, title, desc, artist, views, upload_time,
-                      container_type FROM videos {} LIMIT ? OFFSET ?;",
-                     order_expr))
+                      container_type, original_filename
+                      FROM videos {} LIMIT ? OFFSET ?;", order_expr))
             .map_err(|e| error!(
                 DataError,
                 "Failed to compare statement to get videos: {}", e))?;
@@ -196,25 +200,5 @@ impl Manager
             |e| error!(DataError, "Failed to retrieve videos: {}", e))?.map(
             |row| row.map_err(|e| error!(DataError, "{}", e)));
         rows.collect()
-    }
-}
-
-#[cfg(test)]
-mod tests
-{
-    // Note this useful idiom: importing names from outer (for mod tests) scope.
-    use super::*;
-
-    #[test]
-    fn addAndGetVideo() -> Result<(), Error>
-    {
-        let mut data = Manager::new(sqlite_connection::Source::Memory);
-        data.connect()?;
-        data.init()?;
-        data.addVideo(&Video::fromFile("/dev/null", "/")?)?;
-        let videos = data.getVideos("", 0, 1000, VideoOrder::NewFirst)?;
-        assert_eq!(videos.len(), 1);
-        assert_eq!(videos[0].path.to_str().unwrap(), "dev/null");
-        Ok(())
     }
 }

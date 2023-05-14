@@ -9,8 +9,8 @@
       <a href="{{ url_for(name='upload', arg='') }}">Upload</a>
     </nav>
     <div class="VideoWrapper">
-      <video class="VideoPlayer" controls>
-        <source src="{{ url_for(name='video_file', arg='video.path') }}"
+      <video class="VideoPlayer" controls preload="metadata">
+        <source src="{{ url_for(name='video_file', arg=video.path) }}"
                 type="{{ video.content_type }}" />
       </video>
     </div>

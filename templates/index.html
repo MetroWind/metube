@@ -7,6 +7,7 @@
   <body>
     <nav>
       <a href="{{ url_for(name='upload', arg='') }}">Upload</a>
+      <a href="{{ url_for(name='login', arg='') }}">Authenticate</a>
     </nav>
     <ul class="VideoList">
       {% for video in videos -%}
