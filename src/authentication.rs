@@ -1,12 +1,21 @@
+use r2d2::LoggingErrorHandler;
 use time::OffsetDateTime;
 use sha2::Digest;
 use base64::engine::Engine;
+use regex::Regex;
+use warp::http::response;
 
 use crate::error::Error;
 
 static BASE64: &base64::engine::general_purpose::GeneralPurpose =
     &base64::engine::general_purpose::STANDARD_NO_PAD;
 
+static UNQUOTED_FIELD_PATTERN: Regex = Regex::new(r#"^([^"^,^=]+)=([^"^,]+)$"#)
+    .unwrap();
+static QUOTED_FIELD_PATTERN: Regex = Regex::new(r#"^([^"^,^=]+)="([^"^,]+)"$"#)
+    .unwrap();
+
+/// “Stale” is not used in this implementation.
 #[derive(PartialEq)]
 #[cfg_attr(test, derive(Debug))]
 enum NonceCheck
@@ -14,17 +23,32 @@ enum NonceCheck
     Pass, Stale, Fail
 }
 
+#[derive(PartialEq)]
+#[cfg_attr(test, derive(Debug))]
+enum LoginResult
+{
+    Pass { cnonce: String }, Fail
+}
+
+/// HTTP digest authentication, supports SHA-256 with “auth” qop.
 pub struct DigestAuthentication
 {
+    realm: String,
     secret: String,
     auth_timeout: time::Duration,
+    opaque: String,
 }
 
 impl DigestAuthentication
 {
-    pub fn new(secret: String, auth_timeout: time::Duration) -> Self
+    pub fn new(realm: String, secret: String, auth_timeout: time::Duration) -> Self
     {
-        Self { secret, auth_timeout }
+        let opaque_bytes = rand::random::<i128>().to_ne_bytes();
+        Self {
+            secret,
+            auth_timeout,
+            opaque: BASE64.encode(&opaque_bytes),
+        }
     }
 
     pub fn newNonce(&self) -> String
@@ -126,6 +150,109 @@ impl DigestAuthentication
             NonceCheck::Fail
         }
     }
+
+    pub fn initialWWWAuthHeader(&self) -> String
+    {
+        let mut items = Vec::new();
+        items.push(format!(r#"realm="{}""#, self.realm));
+        items.push(r#"qop="auth""#.to_owned());
+        items.push("algorithm=SHA-256".to_owned());
+        items.push(format!(r#"nonce="{}""#, self.newNonce()));
+        items.push(format!(r#"opaque="{}""#, self.opaque));
+        format!("Digest {}", items.join(","))
+    }
+
+    fn checkFieldEq(field_map: &HashMap<&str, &str>, field_key: &str,
+                    expected_value: &str) -> bool
+    {
+        if let Some(value) = fields.get(field_key)
+        {
+            value != expected_value
+        }
+        else
+        {
+            false
+        }
+    }
+
+    pub fn loginByAuthHeader(&self, header_value: &str, user: &str,
+                             password: &str) -> LoginResult
+    {
+        if !header_value.starts_with("Digest ")
+        {
+            return false;
+        }
+        let mut fields: HashMap<&str, &str> = HashMap::new();
+        for field_str in header_value[7..].split(",")
+        {
+            if let Some(caps) = QUOTED_FIELD_PATTERN.captures(field_str)
+            {
+                fields.insert(caps.get(1).unwrap().as_str(),
+                              caps.get(2).unwrap().as_str());
+            }
+            else if let Some(caps) = UNQUOTED_FIELD_PATTERN.captures(field_str)
+            {
+                fields.insert(caps.get(1).unwrap().as_str(),
+                              caps.get(2).unwrap().as_str());
+            }
+        }
+        let fields = fields;
+        if !Self::checkFieldEq(&fields, "username", user)
+        {
+            return LoginResult::Fail;
+        }
+        if !Self::checkFieldEq(&fields, "realm", &self.realm)
+        {
+            return LoginResult::Fail;
+        }
+        if !Self::checkFieldEq(&fields, "algorithm", "SHA-256")
+        {
+            return LoginResult::Fail;
+        }
+        if !Self::checkFieldEq(&fields, "qop", "auth")
+        {
+            return LoginResult::Fail;
+        }
+        if let Some(nonce) = fields.get("nonce")
+        {
+            if self.checkNonce(nonce) != NonceCheck::Pass
+            {
+                return LoginResult::Fail;
+            }
+        }
+        else
+        {
+            return LoginResult::Fail;
+        }
+        if let Some(nc) = fields.get("nc")
+        {
+            if ns.parse::<i32>() != 1
+            {
+                return LoginResult::Fail;
+            }
+        }
+        else
+        {
+            return LoginResult::Fail;
+        }
+        let cnonce = if let Some(cnonce) = fields.get("cnonce")
+        {
+            cnonce
+        }
+        else
+        {
+            return LoginResult::Fail;
+        };
+        let response = if let Some(res) = fields.get("response")
+        {
+            res
+        }
+        else
+        {
+            return LoginResult::Fail;
+        };
+
+    };
 }
 
 #[cfg(test)]
