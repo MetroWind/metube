@@ -13,8 +13,11 @@ fn defaultServePath() -> String
 }
 
 fn defaultListenPort() -> u16 { 8080 }
-
 fn defaultUploadSizeMax() -> u64 { 10 * 1024 * 1024 * 1024 }
+fn defaultPassword() -> String { "metube".to_owned() }
+fn defaultSessionLifeTime() -> u64 {
+    time::Duration::days(30).as_seconds_f64() as u64
+}
 
 #[derive(Deserialize, Clone)]
 pub struct Configuration
@@ -32,6 +35,10 @@ pub struct Configuration
     pub serve_under_path: String,
     #[serde(default = "defaultUploadSizeMax")]
     pub upload_size_max: u64,
+    #[serde(default = "defaultPassword")]
+    pub password: String,
+    #[serde(default = "defaultSessionLifeTime")]
+    pub session_life_time_sec: u64,
 }
 
 impl Configuration
@@ -57,6 +64,8 @@ impl Default for Configuration
             listen_port: defaultListenPort(),
             serve_under_path: defaultServePath(),
             upload_size_max: defaultUploadSizeMax(),
+            password: defaultPassword(),
+            session_life_time_sec: defaultSessionLifeTime(),
         }
     }
 }

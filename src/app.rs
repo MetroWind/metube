@@ -15,12 +15,20 @@ use warp::{Filter, Reply};
 use warp::http::status::StatusCode;
 use warp::reply::{Response, Html};
 use warp::reject::Reject;
+use warp::redirect::AsLocation;
 use sha2::Digest;
+use base64::engine::Engine;
 
 use crate::error::Error;
 use crate::config::Configuration;
 use crate::data;
 use crate::video::Video;
+
+static BASE64: &base64::engine::general_purpose::GeneralPurpose =
+    &base64::engine::general_purpose::STANDARD;
+static BASE64_NO_PAD: &base64::engine::general_purpose::GeneralPurpose =
+    &base64::engine::general_purpose::STANDARD_NO_PAD;
+static TOKEN_COOKIE: &str = "metube-token";
 
 trait ToResponse
 {
@@ -57,6 +65,21 @@ impl ToResponse for Result<Response, Error>
      }
 }
 
+fn validateSession(token: &Option<String>, data_manager: &data::Manager,
+                   config: &Configuration) -> Result<bool, Error>
+{
+    if let Some(token) = token
+    {
+        data_manager.expireSessions(config.session_life_time_sec)?;
+        data_manager.hasSession(&token)?;
+        Ok(true)
+    }
+    else
+    {
+        Ok(false)
+    }
+}
+
 fn handleIndex(data_manager: &data::Manager, templates: &Tera) ->
     Result<Response, Error>
 {
@@ -80,10 +103,20 @@ fn handleVideo(id: String, data_manager: &data::Manager, templates: &Tera) ->
         |e| rterr!("Failed to render template video.html: {}", e))
 }
 
-fn handleUploadPage(templates: &Tera) -> Result<String, Error>
+fn handleUploadPage(data_manager: &data::Manager, templates: &Tera,
+                    config: &Configuration, token: Option<String>) ->
+    Result<String, Error>
 {
-    templates.render("upload.html", &tera::Context::new()).map_err(
-        |e| rterr!("Failed to render template upload.html: {}", e))
+    if validateSession(&token, data_manager, config)?
+    {
+        templates.render("upload.html", &tera::Context::new())
+            .map_err(|e| rterr!("Failed to render template upload.html: {}",
+                                e))
+    }
+    else
+    {
+        Err(Error::HTTPStatus(StatusCode::UNAUTHORIZED, String::new()))
+    }
 }
 
 fn randomTempFilename<P: AsRef<Path>>(dir: P) -> PathBuf
@@ -156,11 +189,17 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
     Ok(video)
 }
 
-async fn handleUpload(form_data: warp::multipart::FormData,
+async fn handleUpload(token: Option<String>,
+                      form_data: warp::multipart::FormData,
                       data_manager: &data::Manager,
                       config: &Configuration) ->
     Result<String, warp::Rejection>
 {
+    if !validateSession(&token, data_manager, config).map_err(
+        |_| warp::reject::reject())?
+    {
+        return Err(warp::reject::reject());
+    }
     let parts: Vec<_> = form_data.and_then(
         |part| async move { videoFromPart(part, config).await })
         .try_collect().await.map_err(|e| {
@@ -179,14 +218,60 @@ async fn handleUpload(form_data: warp::multipart::FormData,
         })?;
         break;
     }
+    // TODO: remove uploaded file if failed.
     Ok::<_, warp::Rejection>(String::from("OK"))
 }
 
-// fn handleLogin(data_manager: &data::Manager) -> Result<Response, Error>
-// {
-//     warp::http::Response::builder().status(StatusCode::UNAUTHORIZED)
-//         .header("WWW-Authenticate", "Digest")
-// }
+fn createToken() -> String
+{
+    BASE64_NO_PAD.encode(rand::random::<i128>().to_ne_bytes())
+}
+
+fn uriFromStr(s: &str) -> Result<warp::http::uri::Uri, Error>
+{
+    s.parse::<warp::http::uri::Uri>().map_err(|_| rterr!("Invalid URI: {}", s))
+}
+
+fn makeCookie(token: String, session_life_time: u64) -> String
+{
+    format!("{}={}; Max-Age={}; Path=/", TOKEN_COOKIE, token, session_life_time)
+}
+
+fn handleLogin(auth_value_maybe: Option<String>, data_manager: &data::Manager,
+               config: &Configuration) -> Result<Response, Error>
+{
+    if let Some(auth_value) = auth_value_maybe
+    {
+        if !auth_value.starts_with("Basic ")
+        {
+            return Err(Error::HTTPStatus(
+                StatusCode::UNAUTHORIZED,
+                "Not using basic authentication".to_owned()));
+        }
+        let expeced = BASE64.encode(format!("user:{}", config.password));
+        if expeced.as_str() == &auth_value[6..]
+        {
+            // Authentication is good.
+            let token = createToken();
+            data_manager.createSession(&token)?;
+            return Ok(warp::reply::with_header(
+                warp::redirect::found(uriFromStr(&config.serve_under_path)?),
+                "Set-Cookie", makeCookie(token, config.session_life_time_sec))
+                      .into_response());
+        }
+        else
+        {
+            return Err(Error::HTTPStatus(
+                StatusCode::UNAUTHORIZED,
+                "Invalid credential".to_owned()));
+        }
+    }
+
+    Ok(warp::reply::with_header(
+        warp::reply::with_status(warp::reply::reply(), StatusCode::UNAUTHORIZED),
+        "WWW-Authenticate",
+        r#"Basic realm="metube", charset="UTF-8""#).into_response())
+}
 
 fn urlEncode(s: &str) -> String
 {
@@ -200,6 +285,7 @@ fn urlFor(name: &str, arg: &str) -> String
         "index" => String::from("/"),
         "video" => String::from("/v/") + arg,
         "upload" => String::from("/upload/"),
+        "login" => String::from("/login/"),
         "static" => String::from("/static/") + arg,
         "video_file" => String::from("/video/") + arg,
         _ => String::from("/"),
@@ -304,33 +390,42 @@ impl App
         });
 
         let temp = self.templates.clone();
+        let data_manager = self.data_manager.clone();
+        let config = self.config.clone();
         let upload_page = warp::get().and(warp::path("upload"))
-            .and(warp::path::end()).map(
-                move || handleUploadPage(&temp).toResponse());
+            .and(warp::path::end())
+            .and(warp::filters::cookie::optional(TOKEN_COOKIE)).map(
+                move |token: Option<String>|
+                handleUploadPage(&data_manager, &temp, &config, token)
+                    .toResponse());
 
         let config = self.config.clone();
         let data_manager = self.data_manager.clone();
         let upload = warp::post().and(warp::path("upload"))
+            .and(warp::path::end())
+            .and(warp::filters::cookie::optional(TOKEN_COOKIE))
             .and(warp::multipart::form().max_length(self.config.upload_size_max))
-            .and_then(move |data: warp::multipart::FormData| {
+            .and_then(move |token: Option<String>, data: warp::multipart::FormData| {
                 let config = config.clone();
                 let data_manager = data_manager.clone();
                 async move {
-                    handleUpload(data, &data_manager, &config).await
+                    handleUpload(token, data, &data_manager, &config).await
                 }
             });
 
-        // let data = self.data.clone();
-        // let temp = self.templates.clone();
-        // let family = warp::path("family").and(warp::path::param()).map(
-        //     move |param: String| {
-        //         handleFamily(param, &data, &temp).toResponse()
-        //     });
+        let config = self.config.clone();
+        let data_manager = self.data_manager.clone();
+        let login = warp::get().and(warp::path("login")).and(warp::path::end())
+            .and(warp::header::optional::<String>("Authorization"))
+            .map(move |auth_value: Option<String>| {
+                handleLogin(auth_value, &data_manager, &config).toResponse()
+            });
 
         let route = if self.config.serve_under_path == String::from("/") ||
             self.config.serve_under_path.is_empty()
         {
-            statics.or(index).or(video).or(upload_page).or(upload).boxed()
+            statics.or(index).or(video).or(upload_page).or(upload).or(login)
+                .boxed()
         }
         else
         {
@@ -345,7 +440,8 @@ impl App
             {
                 r = r.and(warp::path(seg.to_owned())).boxed();
             }
-            r.and(statics.or(index).or(video).or(upload_page).or(upload))
+            r.and(statics.or(index).or(video).or(upload_page).or(upload)
+                  .or(login))
                 .boxed()
         };
 

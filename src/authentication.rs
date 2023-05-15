@@ -1,11 +1,11 @@
 use r2d2::LoggingErrorHandler;
 use time::OffsetDateTime;
-use sha2::Digest;
 use base64::engine::Engine;
 use regex::Regex;
 use warp::http::response;
 
 use crate::error::Error;
+use crate::utils::sha256Hash;
 
 static BASE64: &base64::engine::general_purpose::GeneralPurpose =
     &base64::engine::general_purpose::STANDARD_NO_PAD;
@@ -31,6 +31,7 @@ enum LoginResult
 }
 
 /// HTTP digest authentication, supports SHA-256 with “auth” qop.
+#[derive(Clone)]
 pub struct DigestAuthentication
 {
     realm: String,
@@ -51,7 +52,7 @@ impl DigestAuthentication
         }
     }
 
-    pub fn newNonce(&self) -> String
+    fn newNonce(&self) -> String
     {
         self.calculateNonce(OffsetDateTime::now_utc().unix_timestamp_nanos())
     }
@@ -59,11 +60,7 @@ impl DigestAuthentication
     fn hashTimestamp(&self, ts_str: &str) -> String
     {
         let to_hash = format!("{}:{}", ts_str, self.secret);
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(to_hash.as_bytes());
-        let hash_byte_strs: Vec<_> = hasher.finalize().iter()
-            .map(|b| format!("{:02x}", b)).collect();
-        hash_byte_strs.join("")
+        sha256Hash(to_hash.as_bytes())
     }
 
     fn calculateNonce(&self, timestamp_nano: i128) -> String
@@ -73,7 +70,7 @@ impl DigestAuthentication
         BASE64.encode(&format!("{} {}", ts_str, hash_str).as_bytes())
     }
 
-    pub fn checkNonce(&self, nonce: &str) -> NonceCheck
+    fn checkNonce(&self, nonce: &str) -> NonceCheck
     {
         let nonce_decoded = if let Ok(b) = BASE64.decode(&nonce)
         {
@@ -175,8 +172,20 @@ impl DigestAuthentication
         }
     }
 
+    fn calculateResponse(&self, username: &str, password: &str, nonce: &str,
+                         nc: &str, cnonce: &str, method: &str, req_uri: &str)
+                         -> String
+    {
+        let ha2 = sha256Hash(format!("{}:{}", method, req_uri).as_bytes());
+        let ha1 = sha256Hash(format!("{}:{}:{}", username, self.realm, password)
+                             .as_bytes());
+        let body = format!("{}:{}:{}:{}:{}", nonce, nc, cnonce, self.qop, ha2);
+        sha256Hash(format!("{}:{}", ha1, body).as_bytes())
+    }
+
     pub fn loginByAuthHeader(&self, header_value: &str, user: &str,
-                             password: &str) -> LoginResult
+                             password: &str, method: &str, req_uri: &str) ->
+        LoginResult
     {
         if !header_value.starts_with("Digest ")
         {
@@ -213,28 +222,30 @@ impl DigestAuthentication
         {
             return LoginResult::Fail;
         }
-        if let Some(nonce) = fields.get("nonce")
+        let nonce = if let Some(nonce) = fields.get("nonce")
         {
             if self.checkNonce(nonce) != NonceCheck::Pass
             {
                 return LoginResult::Fail;
             }
+            nonce
         }
         else
         {
             return LoginResult::Fail;
-        }
-        if let Some(nc) = fields.get("nc")
+        };
+        let nc = if let Some(nc) = fields.get("nc")
         {
-            if ns.parse::<i32>() != 1
+            if nc.parse::<i32>() != 1
             {
                 return LoginResult::Fail;
             }
+            nc
         }
         else
         {
             return LoginResult::Fail;
-        }
+        };
         let cnonce = if let Some(cnonce) = fields.get("cnonce")
         {
             cnonce
@@ -252,7 +263,17 @@ impl DigestAuthentication
             return LoginResult::Fail;
         };
 
-    };
+        let expected_res = self.calculateResponse(user, password, nonce, nc,
+                                                  cnonce, method, req_uri);
+        if expected_res == response
+        {
+            LoginResult::Pass { cnonce: cnonce.to_owned() }
+        }
+        else
+        {
+            LoginResult::Fail
+        }
+    }
 }
 
 #[cfg(test)]

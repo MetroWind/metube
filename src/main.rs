@@ -2,9 +2,9 @@
 
 #[macro_use]
 mod error;
+mod utils;
 mod video;
 mod sqlite_connection;
-mod authentication;
 mod data;
 mod library;
 mod app;

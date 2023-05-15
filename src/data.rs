@@ -1,8 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use log::info;
 use rusqlite as sql;
 use rusqlite::OptionalExtension;
+use time::OffsetDateTime;
 
 use crate::error;
 use crate::error::Error as Error;
@@ -92,6 +94,12 @@ impl Manager
              upload_time INTEGER,
              container_type TEXT,
              original_filename TEXT
+             );", []).map_err(
+            |e| error!(DataError, "Failed to create table: {}", e))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions (
+             token TEXT PRIMARY KEY,
+             auth_time INTEGER
              );", []).map_err(
             |e| error!(DataError, "Failed to create table: {}", e))?;
         Ok(())
@@ -201,4 +209,58 @@ impl Manager
             |row| row.map_err(|e| error!(DataError, "{}", e)));
         rows.collect()
     }
+
+    pub fn createSession(&self, token: &str) -> Result<(), Error>
+    {
+        let conn = self.confirmConnection()?;
+        let row_count = conn.execute(
+            "INSERT INTO sessions (token, auth_time)
+             VALUES (?, ?);", sql::params![
+                 token,
+                 OffsetDateTime::now_utc().unix_timestamp(),
+             ]).map_err(|e| error!(DataError, "Failed to create session: {}", e))?;
+        if row_count != 1
+        {
+            return Err(error!(DataError, "Invalid insert happened"));
+        }
+        Ok(())
+    }
+
+    /// Return time of authentication of the token.
+    pub fn hasSession(&self, token: &str) -> Result<OffsetDateTime, Error>
+    {
+        let conn = self.confirmConnection()?;
+        let mut cmd = conn.prepare(
+            "SELECT auth_time FROM sessions WHERE token=?;")
+            .map_err(|e| error!(
+                DataError,
+                "Failed to prepare statement to lookup session: {}", e))?;
+        if let Some(auth_time_sec) = cmd.query_row([token,], |row| row.get(0))
+            .optional().map_err(
+                |e| error!(DataError, "Failed to look up session: {}", e))?
+        {
+            OffsetDateTime::from_unix_timestamp(auth_time_sec).map_err(
+                |_| rterr!("Invalid auth time"))
+        }
+        else
+        {
+            Err(rterr!("Session not found"))
+        }
+    }
+
+    pub fn expireSessions(&self, life_time_sec: u64) -> Result<(), Error>
+    {
+        let conn = self.confirmConnection()?;
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let row_count = conn.execute(
+            "DELETE FROM sessions WHERE auth_time < ?;",
+            sql::params![now as u64 - life_time_sec])
+            .map_err(|e| error!(DataError, "Failed to expire sessions: {}", e))?;
+        if row_count > 0
+        {
+            info!("Expired {} sessions.", row_count);
+        }
+        Ok(())
+    }
+
 }
