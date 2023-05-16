@@ -4,6 +4,7 @@ use std::io::prelude::*;
 use std::io::BufWriter;
 use std::fs::File;
 use std::ffi::OsStr;
+use std::process::Command;
 
 use futures_util::TryStreamExt;
 use futures_util::StreamExt;
@@ -62,7 +63,39 @@ impl ToResponse for Result<Response, Error>
                 e.into_response()
             }
         }
-     }
+    }
+}
+
+fn generateThumbnail(video: &Video, config: &Configuration) ->
+    Result<PathBuf, Error>
+{
+    let thumb_time_sec = if video.duration > time::Duration::seconds(30)
+    {
+        10.0
+    }
+    else
+    {
+        video.duration.as_seconds_f64() / 3.0
+    };
+    let video_path = Path::new(&config.video_dir).join(&video.path);
+    let thumbnail_path = video_path.with_extension("webp");
+    let status = Command::new("ffmpeg")
+        .args(["-y", "-i", video_path.to_str().unwrap(), "-ss",
+               &thumb_time_sec.to_string(), "-frames:v", "1", "-vf",
+               r#"scale=if(gte(iw\,ih)\,min(512\,iw)\,-2):if(lt(iw\,ih)\,min(512\,ih)\,-2)"#,
+               "-c:v", "libwebp", "-q:v", "4",
+               thumbnail_path.to_str().unwrap()])
+        .stderr(std::process::Stdio::null())
+        .status().map_err(
+            |e| rterr!("Failed to run ffmpeg to generate thumbnail: {}", e))?;
+    if status.success()
+    {
+        Ok(thumbnail_path)
+    }
+    else
+    {
+        Err(rterr!("Ffmpeg failed to generate thumbnail."))
+    }
 }
 
 fn validateSession(token: &Option<String>, data_manager: &data::Manager,
@@ -154,6 +187,13 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
     let mut buffers = part.stream();
     while let Some(buffer) = buffers.next().await
     {
+        if buffer.is_err()
+        {
+            if std::fs::remove_file(&temp_file).is_err()
+            {
+                log_error!("Failed to remove temp file at {:?}.", temp_file);
+            }
+        }
         let mut buffer = buffer?;
         while buffer.has_remaining()
         {
@@ -161,11 +201,18 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
             hasher.update(bytes);
             if let Err(e) = f.write_all(bytes)
             {
+                drop(f);
+                if std::fs::remove_file(&temp_file).is_err()
+                {
+                    log_error!("Failed to remove temp file at {:?}.", temp_file);
+                }
                 return Ok(Err(rterr!("Failed to write temp file: {}", e)));
             }
             buffer.advance(bytes.len());
         }
     }
+    drop(f);
+
     let ext = filename.extension().or(Some(OsStr::new(""))).unwrap();
     let hash = hasher.finalize();
     let byte_strs: Vec<_> = hash[..6].iter().map(|b| format!("{:02x}", b))
@@ -174,8 +221,10 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
     let video_file: PathBuf = Path::new(&config.video_dir).join(id)
         .with_extension(ext);
     debug!("Moving video {:?} --> {:?}...", temp_file, video_file);
-    if let Err(e) = std::fs::rename(temp_file, &video_file)
+    if let Err(e) = std::fs::rename(&temp_file, &video_file)
     {
+        std::fs::remove_file(&temp_file).ok();
+        std::fs::remove_file(&video_file).ok();
         return Ok(Err(rterr!("Failed to rename temp file: {}", e)));
     }
     let video = Video::fromFile(video_file.file_name().unwrap(),
@@ -186,6 +235,15 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
             video.upload_time = time::OffsetDateTime::now_utc();
             video
         });
+    if video.is_err()
+    {
+        std::fs::remove_file(&video_file).ok();
+    }
+    if let Err(e) = generateThumbnail(video.as_ref().unwrap(), config)
+    {
+        // Thumbnail generation is allowed to fail.
+        log_error!("{}", e);
+    }
     Ok(video)
 }
 
@@ -214,6 +272,7 @@ async fn handleUpload(token: Option<String>,
         })?;
         data_manager.addVideo(&v).map_err(|e| {
             log_error!("Failed to add video: {}", e);
+            std::fs::remove_file(Path::new(&config.video_dir).join(v.path)).ok();
             warp::reject::reject()
         })?;
         break;

@@ -6,8 +6,10 @@ use std::fmt::Debug;
 
 use serde::ser::{Serialize, Serializer, SerializeStruct};
 use regex::Regex;
+use log::debug;
 
 use crate::error::Error;
+use crate::config::Configuration;
 
 pub enum ContainerType
 {
@@ -55,7 +57,7 @@ impl ContainerType
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ProbedMetadataSection
 {
     pub name: String,
@@ -107,6 +109,7 @@ fn parseProbeOutput(output: &str) -> Result<Vec<ProbedMetadataSection>, Error>
             current_section.metadata.insert(key.to_owned(), value.to_owned());
         }
     }
+    debug!("Metadata from probe: {:?}", result);
     Ok(result)
 }
 
@@ -124,6 +127,7 @@ pub struct Video
     pub container_type: ContainerType,
     /// The original filename from user upload. May be empty.
     pub original_filename: String,
+    pub duration: time::Duration,
 }
 
 fn probeVideo(f: &Path) -> Result<Vec<ProbedMetadataSection>, Error>
@@ -174,6 +178,13 @@ fn fillProbedMetadata(mut video: Video, metadata: Vec<ProbedMetadataSection>) ->
             {
                 video.artist = value.clone();
             }
+            else if let Some(value) = section.metadata.get("duration")
+            {
+                debug!("Duration string is {}.", value);
+                video.duration = time::Duration::seconds_f64(
+                    value.parse().map_err(
+                        |_| rterr!("Invalid duration: {}", value))?);
+            }
         }
     }
     Ok(video)
@@ -181,10 +192,12 @@ fn fillProbedMetadata(mut video: Video, metadata: Vec<ProbedMetadataSection>) ->
 
 impl Video
 {
+    // TODO: move this to app.rs.
     pub fn fromFile<P: AsRef<Path> + Debug>(f: P, video_dir: &str) ->
         Result<Self, Error>
     {
         let p: &Path = f.as_ref();
+        debug!("Processing {}...", p.display());
         let full_path = p.canonicalize().map_err(
             |e| rterr!("Failed to canonicalize path {:?}: {}", p, e))?;
         let video_dir = Path::new(video_dir).canonicalize().map_err(
@@ -211,6 +224,7 @@ impl Video
             original_filename: p.file_name().ok_or_else(
                 || rterr!("Invalid video path without file name"))?.to_str()
                 .ok_or_else(|| rterr!("Invalid video path"))?.to_owned(),
+            duration: time::Duration::default(),
         };
         fillProbedMetadata(video, metadata)
     }
@@ -240,7 +254,7 @@ impl Serialize for Video
         S: Serializer,
     {
         // 3 is the number of fields in the struct.
-        let mut state = serializer.serialize_struct("Video", 9)?;
+        let mut state = serializer.serialize_struct("Video", 10)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field(
             "path", &self.path.to_str().ok_or_else(
@@ -261,6 +275,8 @@ impl Serialize for Video
             "container_type", &self.container_type.toExtension())?;
         state.serialize_field(
             "content_type", &self.container_type.contentType())?;
+        state.serialize_field(
+            "duration_sec", &self.duration.as_seconds_f64())?;
         state.end()
     }
 }

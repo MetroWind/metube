@@ -93,7 +93,8 @@ impl Manager
              views INTEGER,
              upload_time INTEGER,
              container_type TEXT,
-             original_filename TEXT
+             original_filename TEXT,
+             duration REAL
              );", []).map_err(
             |e| error!(DataError, "Failed to create table: {}", e))?;
         conn.execute(
@@ -127,6 +128,7 @@ impl Manager
                     Box::new(rterr!("Invalid extension name from database: {}",
                                     ext))))?,
             original_filename: row.get(8)?,
+            duration: time::Duration::seconds_f64(row.get(9)?),
         })
     }
 
@@ -135,8 +137,9 @@ impl Manager
         let conn = self.confirmConnection()?;
         let row_count = conn.execute(
             "INSERT INTO videos (id, path, title, desc, artist, views,
-                                 upload_time, container_type, original_filename)
-             VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?);", sql::params![
+                                 upload_time, container_type, original_filename,
+                                 duration)
+             VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?);", sql::params![
                  &vid.id,
                  &vid.path.to_str().ok_or_else(
                      || rterr!("Invalid video path: {:?}", vid.path))?,
@@ -146,6 +149,7 @@ impl Manager
                  vid.upload_time.unix_timestamp(),
                  vid.container_type.toExtension(),
                  &vid.original_filename,
+                 vid.duration.as_seconds_f64(),
              ]).map_err(|e| error!(DataError, "Failed to add video: {}", e))?;
         if row_count != 1
         {
@@ -158,7 +162,7 @@ impl Manager
     {
         let conn = self.confirmConnection()?;
         conn.query_row("SELECT id, path, title, desc, artist, views,
-                        upload_time, container_type, original_filename
+                        upload_time, container_type, original_filename, duration
                         FROM videos WHERE id=?;",
                        sql::params![id], Self::row2Video)
 
@@ -199,7 +203,7 @@ impl Manager
 
         let mut cmd = conn.prepare(
             &format!("SELECT id, path, title, desc, artist, views, upload_time,
-                      container_type, original_filename
+                      container_type, original_filename, duration
                       FROM videos {} LIMIT ? OFFSET ?;", order_expr))
             .map_err(|e| error!(
                 DataError,
