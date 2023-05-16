@@ -18,6 +18,7 @@ fn defaultPassword() -> String { "metube".to_owned() }
 fn defaultSessionLifeTime() -> u64 {
     time::Duration::days(30).as_seconds_f64() as u64
 }
+fn defaultThumbnailQuality() -> u8 { 85 }
 
 #[derive(Deserialize, Clone)]
 pub struct Configuration
@@ -39,6 +40,11 @@ pub struct Configuration
     pub password: String,
     #[serde(default = "defaultSessionLifeTime")]
     pub session_life_time_sec: u64,
+    /// Default compression quality of the WebP thumbnail images,
+    /// ranging from 0 to 100. Higher is better. This is passed to
+    /// ffmpeg’s `-q:v` argument.
+    #[serde(default = "defaultThumbnailQuality")]
+    pub thumbnail_quality: u8,
 }
 
 impl Configuration
@@ -66,6 +72,7 @@ impl Default for Configuration
             upload_size_max: defaultUploadSizeMax(),
             password: defaultPassword(),
             session_life_time_sec: defaultSessionLifeTime(),
+            thumbnail_quality: defaultThumbnailQuality(),
         }
     }
 }

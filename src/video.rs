@@ -128,6 +128,8 @@ pub struct Video
     /// The original filename from user upload. May be empty.
     pub original_filename: String,
     pub duration: time::Duration,
+    /// Relative path of the thumbnail file, from the library path.
+    pub thumbnail_path: Option<PathBuf>,
 }
 
 fn probeVideo(f: &Path) -> Result<Vec<ProbedMetadataSection>, Error>
@@ -166,24 +168,28 @@ fn fillProbedMetadata(mut video: Video, metadata: Vec<ProbedMetadataSection>) ->
             {
                 return Err(rterr!("format_name not found"));
             }
-            if let Some(value) = section.metadata.get("TAG:title")
-            {
-                video.title = value.clone();
-            }
-            else if let Some(value) = section.metadata.get("TAG:comment")
-            {
-                video.desc = value.clone();
-            }
-            else if let Some(value) = section.metadata.get("TAG:artist")
-            {
-                video.artist = value.clone();
-            }
-            else if let Some(value) = section.metadata.get("duration")
+            if let Some(value) = section.metadata.get("duration")
             {
                 debug!("Duration string is {}.", value);
                 video.duration = time::Duration::seconds_f64(
                     value.parse().map_err(
                         |_| rterr!("Invalid duration: {}", value))?);
+            }
+            else
+            {
+                return Err(rterr!("Duration not found"));
+            }
+            if let Some(value) = section.metadata.get("TAG:title")
+            {
+                video.title = value.clone();
+            }
+            if let Some(value) = section.metadata.get("TAG:comment")
+            {
+                video.desc = value.clone();
+            }
+            if let Some(value) = section.metadata.get("TAG:artist")
+            {
+                video.artist = value.clone();
             }
         }
     }
@@ -193,6 +199,7 @@ fn fillProbedMetadata(mut video: Video, metadata: Vec<ProbedMetadataSection>) ->
 impl Video
 {
     // TODO: move this to app.rs.
+    /// This function does not remove the video file when failed.
     pub fn fromFile<P: AsRef<Path> + Debug>(f: P, video_dir: &str) ->
         Result<Self, Error>
     {
@@ -225,7 +232,9 @@ impl Video
                 || rterr!("Invalid video path without file name"))?.to_str()
                 .ok_or_else(|| rterr!("Invalid video path"))?.to_owned(),
             duration: time::Duration::default(),
+            thumbnail_path: None,
         };
+        debug!("Filling metadata...");
         fillProbedMetadata(video, metadata)
     }
 
@@ -254,7 +263,7 @@ impl Serialize for Video
         S: Serializer,
     {
         // 3 is the number of fields in the struct.
-        let mut state = serializer.serialize_struct("Video", 10)?;
+        let mut state = serializer.serialize_struct("Video", 11)?;
         state.serialize_field("id", &self.id)?;
         state.serialize_field(
             "path", &self.path.to_str().ok_or_else(
@@ -277,6 +286,9 @@ impl Serialize for Video
             "content_type", &self.container_type.contentType())?;
         state.serialize_field(
             "duration_sec", &self.duration.as_seconds_f64())?;
+        state.serialize_field(
+            "thumbnail_path",
+            &self.thumbnail_path.as_ref().map(|p| p.to_str().unwrap()))?;
         state.end()
     }
 }

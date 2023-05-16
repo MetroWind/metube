@@ -11,7 +11,8 @@
     </nav>
     <ul class="VideoList">
       {% for video in videos -%}
-      <li><a href="{{ url_for(name='video', arg=video.id) }}">{{ video.title }}</a></li>
+      <li><img class="Thumbnail" src="{{ url_for(name='video_file', arg=video.thumbnail_path) }}" />
+        <a href="{{ url_for(name='video', arg=video.id) }}">{{ video.title }}</a></li>
       {%- endfor %}
     </ul>
   </body>

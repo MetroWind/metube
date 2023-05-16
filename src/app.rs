@@ -24,6 +24,7 @@ use crate::error::Error;
 use crate::config::Configuration;
 use crate::data;
 use crate::video::Video;
+use crate::video_utils::{expectedThumbnailPath, videoPath};
 
 static BASE64: &base64::engine::general_purpose::GeneralPurpose =
     &base64::engine::general_purpose::STANDARD;
@@ -77,13 +78,13 @@ fn generateThumbnail(video: &Video, config: &Configuration) ->
     {
         video.duration.as_seconds_f64() / 3.0
     };
-    let video_path = Path::new(&config.video_dir).join(&video.path);
-    let thumbnail_path = video_path.with_extension("webp");
+    let video_path = videoPath(video, config);
+    let thumbnail_path = expectedThumbnailPath(video, config);
     let status = Command::new("ffmpeg")
         .args(["-y", "-i", video_path.to_str().unwrap(), "-ss",
                &thumb_time_sec.to_string(), "-frames:v", "1", "-vf",
                r#"scale=if(gte(iw\,ih)\,min(512\,iw)\,-2):if(lt(iw\,ih)\,min(512\,ih)\,-2)"#,
-               "-c:v", "libwebp", "-q:v", "4",
+               "-c:v", "libwebp", "-q:v", &config.thumbnail_quality.to_string(),
                thumbnail_path.to_str().unwrap()])
         .stderr(std::process::Stdio::null())
         .status().map_err(
@@ -227,8 +228,8 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
         std::fs::remove_file(&video_file).ok();
         return Ok(Err(rterr!("Failed to rename temp file: {}", e)));
     }
-    let video = Video::fromFile(video_file.file_name().unwrap(),
-                                &config.video_dir).map(
+    let mut video = Video::fromFile(video_file.file_name().unwrap(),
+                                    &config.video_dir).map(
         |v| {
             let mut video = v;
             video.original_filename = orig_name.or(Some(String::new())).unwrap();
@@ -243,10 +244,20 @@ async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
     {
         // Thumbnail generation is allowed to fail.
         log_error!("{}", e);
+        std::fs::remove_file(&expectedThumbnailPath(video.as_ref().unwrap(),
+                                                    config)).ok();
+    }
+    else
+    {
+        video = video.map(|mut v| {
+            v.thumbnail_path = Some(v.path.with_extension("webp"));
+            v
+        });
     }
     Ok(video)
 }
 
+/// TODO: pipeline the whole upload process.
 async fn handleUpload(token: Option<String>,
                       form_data: warp::multipart::FormData,
                       data_manager: &data::Manager,
@@ -277,7 +288,6 @@ async fn handleUpload(token: Option<String>,
         })?;
         break;
     }
-    // TODO: remove uploaded file if failed.
     Ok::<_, warp::Rejection>(String::from("OK"))
 }
 
