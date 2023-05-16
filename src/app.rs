@@ -20,11 +20,12 @@ use warp::redirect::AsLocation;
 use sha2::Digest;
 use base64::engine::Engine;
 
+use crate::error;
 use crate::error::Error;
 use crate::config::Configuration;
 use crate::data;
 use crate::video::Video;
-use crate::video_processing::{expectedThumbnailPath, videoPath};
+use crate::video_processing::{expectedThumbnailPath, videoPath, UploadingVideo, RawVideo};
 
 static BASE64: &base64::engine::general_purpose::GeneralPurpose =
     &base64::engine::general_purpose::STANDARD;
@@ -166,98 +167,6 @@ fn randomTempFilename<P: AsRef<Path>>(dir: P) -> PathBuf
     }
 }
 
-async fn videoFromPart(part: warp::multipart::Part, config: &Configuration)
-    -> Result<Result<Video, Error>, warp::Error>
-{
-    if part.filename().is_none()
-    {
-        return Ok(Err(Error::HTTPStatus(
-            StatusCode::BAD_REQUEST, String::from("No filename in upload"))));
-    }
-    let filename = PathBuf::from(part.filename().unwrap());
-    let temp_file = randomTempFilename(&config.video_dir);
-    let mut f = match File::create(&temp_file)
-    {
-        Ok(f) => BufWriter::new(f),
-        Err(e) => {
-            return Ok(Err(rterr!("Failed to open temp file: {}", e)));
-        },
-    };
-    let mut hasher = sha2::Sha256::new();
-    let orig_name: Option<String> = part.filename().map(|n| n.to_owned());
-    let mut buffers = part.stream();
-    while let Some(buffer) = buffers.next().await
-    {
-        if buffer.is_err()
-        {
-            if std::fs::remove_file(&temp_file).is_err()
-            {
-                log_error!("Failed to remove temp file at {:?}.", temp_file);
-            }
-        }
-        let mut buffer = buffer?;
-        while buffer.has_remaining()
-        {
-            let bytes = buffer.chunk();
-            hasher.update(bytes);
-            if let Err(e) = f.write_all(bytes)
-            {
-                drop(f);
-                if std::fs::remove_file(&temp_file).is_err()
-                {
-                    log_error!("Failed to remove temp file at {:?}.", temp_file);
-                }
-                return Ok(Err(rterr!("Failed to write temp file: {}", e)));
-            }
-            buffer.advance(bytes.len());
-        }
-    }
-    drop(f);
-
-    let ext = filename.extension().or(Some(OsStr::new(""))).unwrap();
-    let hash = hasher.finalize();
-    let byte_strs: Vec<_> = hash[..6].iter().map(|b| format!("{:02x}", b))
-        .collect();
-    let id = byte_strs.join("");
-    let video_file: PathBuf = Path::new(&config.video_dir).join(id)
-        .with_extension(ext);
-    debug!("Moving video {:?} --> {:?}...", temp_file, video_file);
-    if let Err(e) = std::fs::rename(&temp_file, &video_file)
-    {
-        std::fs::remove_file(&temp_file).ok();
-        std::fs::remove_file(&video_file).ok();
-        return Ok(Err(rterr!("Failed to rename temp file: {}", e)));
-    }
-    let mut video = Video::fromFile(video_file.file_name().unwrap(),
-                                    &config.video_dir).map(
-        |v| {
-            let mut video = v;
-            video.original_filename = orig_name.or(Some(String::new())).unwrap();
-            video.upload_time = time::OffsetDateTime::now_utc();
-            video
-        });
-    if video.is_err()
-    {
-        std::fs::remove_file(&video_file).ok();
-    }
-    if let Err(e) = generateThumbnail(video.as_ref().unwrap(), config)
-    {
-        // Thumbnail generation is allowed to fail.
-        log_error!("{}", e);
-        std::fs::remove_file(&expectedThumbnailPath(video.as_ref().unwrap(),
-                                                    config)).ok();
-    }
-    else
-    {
-        video = video.map(|mut v| {
-            v.thumbnail_path = Some(v.path.with_extension("webp"));
-            v
-        });
-    }
-    Ok(video)
-}
-
-/// TODO: pipeline the whole upload process.
 async fn handleUpload(token: Option<String>,
                       form_data: warp::multipart::FormData,
                       data_manager: &data::Manager,
@@ -269,23 +178,33 @@ async fn handleUpload(token: Option<String>,
     {
         return Err(warp::reject::reject());
     }
+    // let parts: Vec<_> = form_data.and_then(
+    //     |part| async move { videoFromPart(part, config).await })
+    //     .try_collect().await.map_err(|e| {
+    //         log_error!("Failed to collect video: {}", e);
+    //         warp::reject::reject()
+    //     })?;
     let parts: Vec<_> = form_data.and_then(
-        |part| async move { videoFromPart(part, config).await })
-        .try_collect().await.map_err(|e| {
-            log_error!("Failed to collect video: {}", e);
-            warp::reject::reject()
-        })?;
+        |part| async move {
+            let v = UploadingVideo { part };
+            let v = v.saveToTemp(config).await;
+            // v is a Result<_, error::Error>. But this async stream
+            // thing requires a Result<_, warp::Error>. So here we
+            // just wrap a extra layer of Result<_, warp::Error>.
+            // Later we will just unwrap it.
+            Ok(v)
+        }).try_collect().await
+        // Unwrap the Result<_, warp::Error> here.
+        .unwrap();
+
     for part in parts
     {
-        let v = part.map_err(|e| {
-            log_error!("Failed to deal with part: {}", e);
-            warp::reject::reject()
-        })?;
-        data_manager.addVideo(&v).map_err(|e| {
-            log_error!("Failed to add video: {}", e);
-            std::fs::remove_file(Path::new(&config.video_dir).join(v.path)).ok();
-            warp::reject::reject()
-        })?;
+        part.map_err(error::reject)?
+            .moveToLibrary(config).map_err(error::reject)?
+            .makeRelativePath(config).map_err(error::reject)?
+            .probeMetadata(config).map_err(error::reject)?
+            .generateThumbnail(config).map_err(error::reject)?
+            .addToDatabase(config, data_manager).map_err(error::reject)?;
         break;
     }
     Ok::<_, warp::Rejection>(String::from("OK"))

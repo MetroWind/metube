@@ -1,6 +1,7 @@
 use std::error::Error as StdError;
 use std::fmt;
 
+use log::error as log_error;
 use warp::http::status::StatusCode;
 
 #[macro_export]
@@ -41,6 +42,12 @@ pub enum Error
     DataError(String),
     RuntimeError(String),
     HTTPStatus(StatusCode, String),
+}
+
+pub fn reject(e: Error) -> warp::Rejection
+{
+    log_error!("{}", e);
+    warp::reject::reject()
 }
 
 impl fmt::Display for Error
