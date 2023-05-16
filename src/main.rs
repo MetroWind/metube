@@ -4,7 +4,7 @@
 mod error;
 mod utils;
 mod video;
-mod video_utils;
+mod video_processing;
 mod sqlite_connection;
 mod data;
 mod library;

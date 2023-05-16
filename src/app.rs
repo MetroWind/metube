@@ -24,7 +24,7 @@ use crate::error::Error;
 use crate::config::Configuration;
 use crate::data;
 use crate::video::Video;
-use crate::video_utils::{expectedThumbnailPath, videoPath};
+use crate::video_processing::{expectedThumbnailPath, videoPath};
 
 static BASE64: &base64::engine::general_purpose::GeneralPurpose =
     &base64::engine::general_purpose::STANDARD;
