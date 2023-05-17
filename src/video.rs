@@ -1,15 +1,10 @@
 use std::path::{PathBuf, Path};
-use std::process::Command;
-use std::collections::HashMap;
 use std::str;
 use std::fmt::Debug;
 
 use serde::ser::{Serialize, Serializer, SerializeStruct};
-use log::debug;
 
-use crate::error::Error;
-use crate::config::Configuration;
-
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub enum ContainerType
 {
     Mp4, WebM
@@ -93,11 +88,6 @@ impl Video
             duration: time::Duration::default(),
             thumbnail_path: None,
         }
-    }
-
-    pub fn category(&self) -> &Path
-    {
-        self.path.parent().unwrap()
     }
 
     pub fn displayTitle(&self) -> &str

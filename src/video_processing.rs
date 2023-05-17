@@ -7,30 +7,19 @@ use std::ffi::OsStr;
 use std::process::Command;
 use std::str;
 
-use futures_util::TryStreamExt;
 use futures_util::StreamExt;
 use bytes::buf::Buf;
-use log::{info, debug};
+use log::debug;
 use log::error as log_error;
-use tera::Tera;
-use warp::{Filter, Reply};
+use time::OffsetDateTime;
 use warp::http::status::StatusCode;
-use warp::reply::{Response, Html};
-use warp::reject::Reject;
-use warp::redirect::AsLocation;
 use sha2::Digest;
-use base64::engine::Engine;
 use regex::Regex;
 
 use crate::data;
 use crate::error::Error;
 use crate::video::{Video, ContainerType};
 use crate::config::Configuration;
-
-static BASE64: &base64::engine::general_purpose::GeneralPurpose =
-    &base64::engine::general_purpose::STANDARD;
-static BASE64_NO_PAD: &base64::engine::general_purpose::GeneralPurpose =
-    &base64::engine::general_purpose::STANDARD_NO_PAD;
 
 pub fn videoPath(video: &Video, config: &Configuration) -> PathBuf
 {
@@ -160,9 +149,9 @@ fn fillProbedMetadata(mut video: Video, metadata: Vec<ProbedMetadataSection>) ->
             {
                 return Err(rterr!("format_name not found"));
             }
+
             if let Some(value) = section.metadata.get("duration")
             {
-                debug!("Duration string is {}.", value);
                 video.duration = time::Duration::seconds_f64(
                     value.parse().map_err(
                         |_| rterr!("Invalid duration: {}", value))?);
@@ -171,15 +160,41 @@ fn fillProbedMetadata(mut video: Video, metadata: Vec<ProbedMetadataSection>) ->
             {
                 return Err(rterr!("Duration not found"));
             }
+
+            // Get title from possible tags.
             if let Some(value) = section.metadata.get("TAG:title")
             {
                 video.title = value.clone();
             }
+            else if let Some(value) = section.metadata.get("TAG:TITLE")
+            {
+                video.title = value.clone();
+            }
+
+            // Get comment from possible tags.
             if let Some(value) = section.metadata.get("TAG:comment")
             {
                 video.desc = value.clone();
             }
+            else if let Some(value) = section.metadata.get("TAG:COMMENT")
+            {
+                video.desc = value.clone();
+            }
+
+            // Get artist from possible tags.
             if let Some(value) = section.metadata.get("TAG:artist")
+            {
+                video.artist = value.clone();
+            }
+            else if let Some(value) = section.metadata.get("TAG:author")
+            {
+                video.artist = value.clone();
+            }
+            else if let Some(value) = section.metadata.get("TAG:ARTIST")
+            {
+                video.artist = value.clone();
+            }
+            else if let Some(value) = section.metadata.get("TAG:AUTHOR")
             {
                 video.artist = value.clone();
             }
@@ -205,6 +220,10 @@ pub struct RawVideo
 
 impl UploadingVideo
 {
+    /// This will create a temp file under the video directory. This
+    /// is important, because later the video will be renamed to the
+    /// correct name. We need the rename to happen in the same storage
+    /// volumn so that it can succeed.
     pub async fn saveToTemp(self, config: &Configuration) ->
         Result<RawVideo, Error>
     {
@@ -315,6 +334,7 @@ impl RawVideo
     {
         let mut video = Video::new(self.hash, &self.path);
         video.original_filename = self.original_filename;
+        video.upload_time = OffsetDateTime::now_utc();
         let metadata = match probeVideo(
             &Path::new(&config.video_dir).join(&self.path))
         {
@@ -383,6 +403,89 @@ impl Video
             std::fs::remove_file(&videoPath(&self, config)).ok();
             return Err(e)
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests
+{
+    use super::*;
+
+    struct FileDeleter
+    {
+        files: Vec<PathBuf>,
+    }
+
+    impl FileDeleter
+    {
+        fn new() -> Self
+        {
+            Self { files: Vec::new() }
+        }
+
+        fn register<P: AsRef<Path>>(&mut self, f: P)
+        {
+            let p: &Path = f.as_ref();
+            self.files.push(p.to_owned());
+        }
+    }
+
+    impl Drop for FileDeleter
+    {
+        fn drop(&mut self)
+        {
+            for f in &self.files
+            {
+                std::fs::remove_file(&f).ok();
+            }
+        }
+    }
+
+    #[test]
+    fn testVideoPipeline() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut clean_up = FileDeleter::new();
+        let video_dir = std::env::temp_dir();
+        let mut config = Configuration::default();
+        config.video_dir = video_dir.to_str().ok_or(
+            rterr!("Invalid video dir"))?.to_owned();
+        let temp_file = video_dir.join("test.webm");
+        std::fs::copy("test-data/test-av1-opus.webm", &temp_file)?;
+        clean_up.register(video_dir.join("test.webm"));
+        let v = RawVideo {
+            path: temp_file,
+            hash: "12345".to_owned(),
+            original_filename: "test-av1-opus.webm".to_owned(),
+        };
+        let mut data_manager = data::Manager::new(
+            crate::sqlite_connection::Source::Memory);
+        data_manager.connect()?;
+        data_manager.init()?;
+        clean_up.register(video_dir.join("12345.webm"));
+        clean_up.register(video_dir.join("12345.webp"));
+        v.moveToLibrary(&config)?
+            .makeRelativePath(&config)?
+            .probeMetadata(&config)?
+            .generateThumbnail(&config)?
+            .addToDatabase(&config, &data_manager)?;
+
+        let v = data_manager.findVideoByID("12345")?;
+        assert!(v.is_some());
+        let v = v.unwrap();
+        assert_eq!(&v.id, "12345");
+        assert_eq!(v.path.to_str().unwrap(), "12345.webm");
+        assert_eq!(&v.title, "AV1 + Opus test");
+        assert_eq!(&v.artist, "MetroWind");
+        assert_eq!(&v.desc, "It's a test");
+        assert_eq!(v.views, 0);
+        assert!(v.upload_time.unix_timestamp() > 0);
+        assert_eq!(v.container_type, ContainerType::WebM);
+        assert_eq!(&v.original_filename, "test-av1-opus.webm");
+        assert_eq!(v.duration, time::Duration::seconds(10));
+        assert!(v.thumbnail_path.is_some());
+        assert!(video_dir.join(&v.thumbnail_path.unwrap()).exists());
+
         Ok(())
     }
 }
