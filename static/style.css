@@ -51,12 +51,53 @@ table {
 
 /* ========== Main style =========================================> */
 
+:root
+{
+    --color-bg: black;
+    --color-fg: #ced6e0;
+    --color-link: white;
+    --color-block: #2f3542;
+}
+
+*
+{
+    box-sizing: border-box;
+}
+
 body
 {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
     font-size: 14px;
     line-height: 1.4;
-    margin: 10px;
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+}
+
+a
+{
+    color: var(--color-link);
+    text-decoration: none;
+}
+
+a:hover
+{
+    color: var(--color-bg);
+    background-color: var(--color-link);
+}
+
+nav
+{
+    height: 3em;
+    display: flex;
+    justify-content: space-between;
+    background-color: var(--color-block);
+    padding: 10px;
+}
+
+h1#SiteTitle
+{
+    font-size: 120%;
+    font-style: italic;
 }
 
 ul.VideoList
@@ -64,14 +105,33 @@ ul.VideoList
     display: flex;
     flex-wrap: wrap;
     gap: 50px;
+    padding: 32px;
 }
 
 li.VideoListItem
 {
 }
 
+.ThumbnailWrapper
+{
+    width: 160px;
+    height: 90px;
+    background-color: grey;
+    border-radius: 16px;
+    text-align: center;
+    line-height: 90px;
+    margin-bottom: 8px;
+}
+
 img.Thumbnail
 {
-    max-width: 128px;
-    max-height: 128px;
+    max-width: 160px;
+    max-height: 90px;
+    vertical-align: middle;
+}
+
+img.ThumbnailPlaceholder
+{
+    width: 32%;
+    color: var(--color-fg);
 }
