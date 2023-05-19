@@ -5,9 +5,7 @@
     <title>MeTube -> {{ video.title }}</title>
   </head>
   <body>
-    <nav>
-      <a href="{{ url_for(name='upload', arg='') }}">Upload</a>
-    </nav>
+    {% include 'include-nav.html' %}
     <div class="VideoWrapper">
       <video class="VideoPlayer" controls preload="metadata">
         <source src="{{ url_for(name='video_file', arg=video.path) }}"
@@ -15,7 +13,14 @@
       </video>
     </div>
     <div>
-      <h2>{{ video.title }}</h2>
+      <div id="VideoMeta">
+        <div id="VideoTitleLine">
+          <h2>{{ video.title }}</h2>
+          <div id="UploadTime">{{ video.upload_time_utc_str }}</div>
+        </div>
+        <p id="VideoDesc">{{ video.desc }}</p>
+      </div>
     </div>
+    {% include 'include-footer.html' %}
   </body>
 </html>

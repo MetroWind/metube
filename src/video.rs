@@ -131,8 +131,20 @@ impl Serialize for Video
             "container_type", &self.container_type.toExtension())?;
         state.serialize_field(
             "content_type", &self.container_type.contentType())?;
-        state.serialize_field(
-            "duration_sec", &self.duration.as_seconds_f64())?;
+        let hours = self.duration.whole_hours();
+        let minutes = (self.duration - time::Duration::hours(hours))
+            .whole_minutes();
+        let seconds = (self.duration - time::Duration::hours(hours) -
+                       time::Duration::minutes(minutes)).whole_seconds();
+        let duration_str = if hours > 0
+        {
+            format!("{}:{:02}:{:02}", hours, minutes, seconds)
+        }
+        else
+        {
+            format!("{:02}:{:02}", minutes, seconds)
+        };
+        state.serialize_field("duration_str", &duration_str)?;
         state.serialize_field(
             "thumbnail_path",
             &self.thumbnail_path.as_ref().map(|p| p.to_str().unwrap()))?;

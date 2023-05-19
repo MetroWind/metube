@@ -57,6 +57,7 @@ table {
     --color-fg: #ced6e0;
     --color-link: white;
     --color-block: #2f3542;
+    --color-weak-fg: #57606f;
 }
 
 *
@@ -112,26 +113,90 @@ li.VideoListItem
 {
 }
 
-.ThumbnailWrapper
+figure.Thumbnail
 {
     width: 160px;
     height: 90px;
-    background-color: grey;
     border-radius: 16px;
-    text-align: center;
-    line-height: 90px;
     margin-bottom: 8px;
+    background-color: var(--color-block);
+    background-position: center;
+    background-size: contain;
+    background-repeat: no-repeat;
 }
 
-img.Thumbnail
+figure.ThumbnailFallback
 {
-    max-width: 160px;
-    max-height: 90px;
-    vertical-align: middle;
+    background-size: 64px;
 }
 
-img.ThumbnailPlaceholder
+a.ThumbnailLink
 {
-    width: 32%;
-    color: var(--color-fg);
+    display: flex;
+    width: 100%;
+    height: 100%;
+}
+
+a.ThumbnailLink:hover
+{
+    color: unset;
+    background-color: unset;
+}
+
+.VideoThumbDuration
+{
+    align-self: flex-end;
+    text-align: right;
+    width: 100%;
+    padding-right: 8px;
+    text-shadow: var(--color-bg) 0px 0px 4px;
+}
+
+.VideoMetaInfo
+{
+    color: var(--color-weak-fg);
+}
+
+video.VideoPlayer
+{
+    width: 100%;
+    max-height: calc(100vh - 3em);
+}
+
+#VideoMeta
+{
+    padding: 10px;
+}
+
+#VideoTitleLine
+{
+    display: flex;
+    gap: 1em;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+#VideoTitleLine > h2
+{
+    font-size: 144%;
+}
+
+#UploadTime
+{
+    color: var(--color-weak-fg);
+}
+
+hr
+{
+    height: 6px;
+    width: 32px;
+    background-color: var(--color-block);
+    border: none;
+    margin-top: 40px;
+    margin-bottom: 40px;
+}
+
+footer
+{
+    text-align: center;
 }

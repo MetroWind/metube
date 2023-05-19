@@ -5,26 +5,30 @@
     <title>MeTube -> Index</title>
   </head>
   <body>
-    <nav>
-      <h1 id="SiteTitle">MeTube</h1>
-      <div id="NavMetaLinks">
-        <a href="{{ url_for(name='upload', arg='') }}">Upload</a>
-        <a href="{{ url_for(name='login', arg='') }}">Authenticate</a>
-      </div>
-    </nav>
+    {% include 'include-nav.html' %}
     <ul class="VideoList">
       {% for video in videos -%}
       <li class="VideoListItem">
-        <div class="ThumbnailWrapper">
-          {% if video.thumbnail_path %}
-          <img class="Thumbnail" src="{{ url_for(name='video_file', arg=video.thumbnail_path) }}" />
+        {% if video.thumbnail_path %}
+        <figure class="Thumbnail" style="background-image: url('{{ url_for(name='video_file', arg=video.thumbnail_path) }}');">
           {% else %}
-          <img class="Thumbnail ThumbnailPlaceholder" src="{{ url_for(name='static', arg='film.svg') }}" />
+        <figure class="Thumbnail ThumbnailFallback" style="background-image: url('{{ url_for(name='static', arg='film.svg') }}');">
           {% endif %}
+          <a class="ThumbnailLink" href="{{ url_for(name='video', arg=video.id) }}">
+            <div class="VideoThumbDuration">{{ video.duration_str }}</div>
+          </a>
+        </figure>
+        <div class="VideoThumbInfo">
+          <div>
+            <a href="{{ url_for(name='video', arg=video.id) }}">{{ video.title }}</a>
+          </div>
+          <div class="VideoMetaInfo">
+            <div>{{ video.upload_time_utc_str }}</div>
+          </div>
         </div>
-        <a href="{{ url_for(name='video', arg=video.id) }}">{{ video.title }}</a>
       </li>
       {%- endfor %}
     </ul>
+    {% include 'include-footer.html' %}
   </body>
 </html>
