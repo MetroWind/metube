@@ -1,0 +1,48 @@
+= MeTube
+
+A naively simple self-hosted video hosting service
+
+== Introduction
+
+MeTube is a simple video hosting service. It is intended for
+single-uploader small throughput use cases such as
+
+- Sharing a funny cat video you just recorded to the family;
+- Sharing short gameing moments on social network.
+
+== Features
+
+- Basic HTTP authentication with a preset (in the config file)
+  password.
+- Easy deployment with only a few dependencies (FFmpeg and sqlite3).
+- HTML and CSS are just static files that are easy to modify
+- Almost no JavaScript (only in the upload page)
+- No transcoding (for now). I don’t like my perfectly encoded video be
+  ruined by another encoding. If I implement it later, it will be
+  optional.
+- Automatic thumbnail generation with ffmpeg.
+- Supports the MP4 and WebM containers. The program does not care about
+  the streams inside. It is up to the uploader to make sure the
+  viewers are able to watch the video on their browsers.
+
+== Planned features
+
+- Playlists
+- Deleting videos
+- Private videos
+
+== Deployment
+
+=== Dependencies
+
+- A somewhat recent FFmpeg with FFprobe and libwebp support (for
+  thumbnail generation). The oldest I’ve tried is 4.4.3.
+- sqlite3
+
+=== Installation
+
+(TODO)
+
+=== Running
+
+(TODO)
