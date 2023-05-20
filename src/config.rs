@@ -21,6 +21,7 @@ fn defaultSessionLifeTime() -> u64 {
 fn defaultThumbnailQuality() -> u8 { 85 }
 fn defaultSiteTitle() -> String { String::from("MeTube") }
 fn defaultFootnote() -> String { String::new() }
+fn defaultUrlDomain() -> String { String::from("http://example.org") }
 
 #[derive(Deserialize, Serialize, Clone)]
 pub struct SiteInfo
@@ -29,6 +30,11 @@ pub struct SiteInfo
     pub site_title: String,
     #[serde(default = "defaultFootnote")]
     pub footnote: String,
+    /// The beginning part of the URL of the website, including only
+    /// the protocol and domain, without the trailing slash. This is
+    /// only used in the OGP metadata. Example: http://example.org.
+    #[serde(default = "defaultUrlDomain")]
+    pub url_domain: String,
 }
 
 #[derive(Deserialize, Clone)]
@@ -77,6 +83,7 @@ impl Default for SiteInfo
         Self {
             site_title: defaultSiteTitle(),
             footnote: defaultFootnote(),
+            url_domain: defaultUrlDomain(),
         }
     }
 }

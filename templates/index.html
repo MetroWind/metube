@@ -2,7 +2,11 @@
 <html>
   <head>
     {% include 'includes.html' %}
-    <title>MeTube -> Index</title>
+    <meta property="og:title" content="MeTube → Index" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="{{ site_info.url_domain ~ url_for(name='index', arg='') }}" />
+    <meta property="og:image" content="{{ site_info.url_domain ~ url_for(name='static', arg='film.svg') }}" />
+    <title>MeTube → Index</title>
   </head>
   <body>
     {% include 'include-nav.html' %}
