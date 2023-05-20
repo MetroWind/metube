@@ -58,6 +58,7 @@ table {
     --color-link: white;
     --color-block: #2f3542;
     --color-weak-fg: #57606f;
+    --thumb-width: 240px;
 }
 
 *
@@ -105,7 +106,7 @@ ul.VideoList
 {
     display: flex;
     flex-wrap: wrap;
-    gap: 50px;
+    gap: 32px;
     padding: 32px;
 }
 
@@ -115,8 +116,8 @@ li.VideoListItem
 
 figure.Thumbnail
 {
-    width: 160px;
-    height: 90px;
+    width: var(--thumb-width);
+    height: calc(var(--thumb-width) * 0.5625);
     border-radius: 16px;
     margin-bottom: 8px;
     background-color: var(--color-block);
@@ -143,6 +144,12 @@ a.ThumbnailLink:hover
     background-color: unset;
 }
 
+.VideoThumbTitleWrapper
+{
+    max-height: 2.8em;          /* 2 * 1.4 */
+    overflow: hidden;
+}
+
 .VideoThumbDuration
 {
     align-self: flex-end;
@@ -150,6 +157,11 @@ a.ThumbnailLink:hover
     width: 100%;
     padding-right: 8px;
     text-shadow: var(--color-bg) 0px 0px 4px;
+}
+
+.VideoThumbInfo
+{
+    max-width: var(--thumb-width);
 }
 
 .VideoMetaInfo
@@ -199,4 +211,5 @@ hr
 footer
 {
     text-align: center;
+    margin-bottom: 32px;
 }

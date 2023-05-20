@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 // Shamelessly copied and modified from r2d2-sqlite.
 
 use std::fmt;

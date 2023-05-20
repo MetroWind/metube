@@ -1,5 +1,5 @@
 <nav>
-  <h1 id="SiteTitle"><a href="{{ url_for(name='index', arg='') }}">MeTube</a></h1>
+  <h1 id="SiteTitle"><a href="{{ url_for(name='index', arg='') }}">{{ site_info.site_title }}</a></h1>
   <div id="NavMetaLinks">
     <a href="{{ url_for(name='upload', arg='') }}">Upload</a>
     <a href="{{ url_for(name='login', arg='') }}">Authenticate</a>

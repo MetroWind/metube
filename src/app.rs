@@ -1,31 +1,20 @@
 use std::path::{PathBuf, Path};
 use std::collections::HashMap;
-use std::io::prelude::*;
-use std::io::BufWriter;
-use std::fs::File;
-use std::ffi::OsStr;
-use std::process::Command;
 
 use futures_util::TryStreamExt;
-use futures_util::StreamExt;
-use bytes::buf::Buf;
-use log::{info, debug};
+use log::info;
 use log::error as log_error;
 use tera::Tera;
 use warp::{Filter, Reply};
 use warp::http::status::StatusCode;
-use warp::reply::{Response, Html};
-use warp::reject::Reject;
-use warp::redirect::AsLocation;
-use sha2::Digest;
+use warp::reply::Response;
 use base64::engine::Engine;
 
 use crate::error;
 use crate::error::Error;
 use crate::config::Configuration;
 use crate::data;
-use crate::video::Video;
-use crate::video_processing::{expectedThumbnailPath, videoPath, UploadingVideo, RawVideo};
+use crate::video_processing::UploadingVideo;
 
 static BASE64: &base64::engine::general_purpose::GeneralPurpose =
     &base64::engine::general_purpose::STANDARD;
@@ -68,38 +57,6 @@ impl ToResponse for Result<Response, Error>
     }
 }
 
-fn generateThumbnail(video: &Video, config: &Configuration) ->
-    Result<PathBuf, Error>
-{
-    let thumb_time_sec = if video.duration > time::Duration::seconds(30)
-    {
-        10.0
-    }
-    else
-    {
-        video.duration.as_seconds_f64() / 3.0
-    };
-    let video_path = videoPath(video, config);
-    let thumbnail_path = expectedThumbnailPath(video, config);
-    let status = Command::new("ffmpeg")
-        .args(["-y", "-i", video_path.to_str().unwrap(), "-ss",
-               &thumb_time_sec.to_string(), "-frames:v", "1", "-vf",
-               r#"scale=if(gte(iw\,ih)\,min(512\,iw)\,-2):if(lt(iw\,ih)\,min(512\,ih)\,-2)"#,
-               "-c:v", "libwebp", "-q:v", &config.thumbnail_quality.to_string(),
-               thumbnail_path.to_str().unwrap()])
-        .stderr(std::process::Stdio::null())
-        .status().map_err(
-            |e| rterr!("Failed to run ffmpeg to generate thumbnail: {}", e))?;
-    if status.success()
-    {
-        Ok(thumbnail_path)
-    }
-    else
-    {
-        Err(rterr!("Ffmpeg failed to generate thumbnail."))
-    }
-}
-
 fn validateSession(token: &Option<String>, data_manager: &data::Manager,
                    config: &Configuration) -> Result<bool, Error>
 {
@@ -115,27 +72,34 @@ fn validateSession(token: &Option<String>, data_manager: &data::Manager,
     }
 }
 
-fn handleIndex(data_manager: &data::Manager, templates: &Tera) ->
-    Result<Response, Error>
+fn handleIndex(data_manager: &data::Manager, templates: &Tera,
+               config: &Configuration) -> Result<Response, Error>
 {
     let videos = data_manager.getVideos(
-        "", 0, 1000, data::VideoOrder::NewFirst)?;
+        0, 1000, data::VideoOrder::NewFirst)?;
     let mut context = tera::Context::new();
     context.insert("videos", &videos);
+    context.insert("site_info", &config.site_info);
     Ok(warp::reply::html(templates.render("index.html", &context).map_err(
         |e| rterr!("Failed to render template index.html: {}", e))?)
        .into_response())
 }
 
-fn handleVideo(id: String, data_manager: &data::Manager, templates: &Tera) ->
-    Result<String, Error>
+fn handleVideo(id: String, data_manager: &data::Manager, templates: &Tera,
+               config: &Configuration) -> Result<String, Error>
 {
     let video = data_manager.findVideoByID(&id).map_err(|_| Error::HTTPStatus(
         StatusCode::NOT_FOUND, format!("Video {} not found", id)))?;
     let mut context = tera::Context::new();
     context.insert("video", &video);
-    templates.render("video.html", &context).map_err(
-        |e| rterr!("Failed to render template video.html: {}", e))
+    context.insert("site_info", &config.site_info);
+    let res = templates.render("video.html", &context).map_err(
+        |e| rterr!("Failed to render template video.html: {}", e));
+    if let Err(e) = data_manager.increaseViewCount(&id)
+    {
+        log_error!("{}", e);
+    }
+    res
 }
 
 fn handleUploadPage(data_manager: &data::Manager, templates: &Tera,
@@ -151,19 +115,6 @@ fn handleUploadPage(data_manager: &data::Manager, templates: &Tera,
     else
     {
         Err(Error::HTTPStatus(StatusCode::UNAUTHORIZED, String::new()))
-    }
-}
-
-fn randomTempFilename<P: AsRef<Path>>(dir: P) -> PathBuf
-{
-    loop
-    {
-        let filename = format!("temp-{}", rand::random::<u32>());
-        let path = dir.as_ref().join(&filename);
-        if !path.exists()
-        {
-            return path;
-        }
     }
 }
 
@@ -259,11 +210,6 @@ fn handleLogin(auth_value_maybe: Option<String>, data_manager: &data::Manager,
         warp::reply::with_status(warp::reply::reply(), StatusCode::UNAUTHORIZED),
         "WWW-Authenticate",
         r#"Basic realm="metube", charset="UTF-8""#).into_response())
-}
-
-fn urlEncode(s: &str) -> String
-{
-    urlencoding::encode(s).to_string()
 }
 
 fn urlFor(name: &str, arg: &str) -> String
@@ -366,15 +312,17 @@ impl App
 
         let data_manager = self.data_manager.clone();
         let temp = self.templates.clone();
+        let config = self.config.clone();
         let index = warp::get().and(warp::path::end()).map(move || {
-            handleIndex(&data_manager, &temp).toResponse()
+            handleIndex(&data_manager, &temp, &config).toResponse()
         });
 
         let data_manager = self.data_manager.clone();
         let temp = self.templates.clone();
+        let config = self.config.clone();
         let video = warp::get().and(warp::path("v")).and(warp::path::param())
             .and(warp::path::end()).map(move |id: String| {
-            handleVideo(id, &data_manager, &temp).toResponse()
+            handleVideo(id, &data_manager, &temp, &config).toResponse()
         });
 
         let temp = self.templates.clone();

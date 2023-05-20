@@ -19,8 +19,8 @@
           </a>
         </figure>
         <div class="VideoThumbInfo">
-          <div>
-            <a href="{{ url_for(name='video', arg=video.id) }}">{{ video.title }}</a>
+          <div class="VideoThumbTitleWrapper">
+            <a class="VideoThumbTitle" href="{{ url_for(name='video', arg=video.id) }}">{{ video.title }}</a>
           </div>
           <div class="VideoMetaInfo">
             <div>{{ video.upload_time_utc_str }}</div>

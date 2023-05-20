@@ -68,18 +68,6 @@ impl Manager
         Ok(())
     }
 
-    fn tableExists(&self, table: &str) -> Result<bool, Error>
-    {
-        let conn = self.confirmConnection()?;
-        let row = conn.query_row(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?;",
-            sql::params![table],
-            |row: &sql::Row|->sql::Result<String> { row.get(0) })
-            .optional().map_err(
-                |_| error!(DataError, "Failed to look up table {}", table))?;
-        Ok(row.is_some())
-    }
-
     pub fn init(&self) -> Result<(), Error>
     {
         let conn = self.confirmConnection()?;
@@ -180,10 +168,10 @@ impl Manager
     {
         let conn = self.confirmConnection()?;
         let row_count = conn.execute(
-            "UPDATE videos SET view = view + 1 WHERE id=?;",
-            sql::params![id]).map_err(
-            |_| error!(DataError, "Failed to increase view count for video {}",
-                       id))?;
+            "UPDATE videos SET views = views + 1 WHERE id=?;",
+            sql::params![id]).map_err(|e| error!(
+                DataError, "Failed to increase view count for video {}: {}",
+                id, e))?;
         if row_count != 1
         {
             return Err(error!(
@@ -197,8 +185,8 @@ impl Manager
     /// Retrieve “count” number of videos, starting from the entry at
     /// index “start_index”. Index is 0-based. Returned entries are
     /// sorted from new to old.
-    pub fn getVideos(&self, category: &str, start_index: u64, count: u64,
-                      order: VideoOrder) -> Result<Vec<Video>, Error>
+    pub fn getVideos(&self, start_index: u64, count: u64, order: VideoOrder) ->
+        Result<Vec<Video>, Error>
     {
         let conn = self.confirmConnection()?;
 

@@ -2,18 +2,12 @@
 
 #[macro_use]
 mod error;
-mod utils;
 mod video;
 mod video_processing;
 mod sqlite_connection;
 mod data;
-mod library;
 mod app;
 mod config;
-
-use std::path::Path;
-
-use log::warn;
 
 use error::Error;
 use config::Configuration;

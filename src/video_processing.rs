@@ -31,19 +31,6 @@ pub fn expectedThumbnailPath(video: &Video, config: &Configuration) -> PathBuf
     Path::new(&config.video_dir).join(&video.path).with_extension("webp")
 }
 
-pub fn findThumbnail(video: &Video, config: &Configuration) -> Option<PathBuf>
-{
-    let path = expectedThumbnailPath(video, config);
-    if path.exists()
-    {
-        Some(path)
-    }
-    else
-    {
-        None
-    }
-}
-
 fn randomTempFilename<P: AsRef<Path>>(dir: P) -> PathBuf
 {
     loop
@@ -230,7 +217,9 @@ impl UploadingVideo
         let orig_name = self.part.filename().map(|n| n.to_owned()).ok_or_else(
             || Error::HTTPStatus(StatusCode::BAD_REQUEST,
                                  String::from("No filename in upload")))?;
-        let temp_file = randomTempFilename(&config.video_dir);
+        let temp_file = randomTempFilename(&config.video_dir)
+            .with_extension(Path::new(&orig_name).extension()
+                            .or(Some(OsStr::new(""))).unwrap());
         let mut f = match File::create(&temp_file)
         {
             Ok(f) => BufWriter::new(f),

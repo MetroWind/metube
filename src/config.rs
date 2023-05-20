@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::Error;
 
@@ -19,6 +19,17 @@ fn defaultSessionLifeTime() -> u64 {
     time::Duration::days(30).as_seconds_f64() as u64
 }
 fn defaultThumbnailQuality() -> u8 { 85 }
+fn defaultSiteTitle() -> String { String::from("MeTube") }
+fn defaultFootnote() -> String { String::new() }
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct SiteInfo
+{
+    #[serde(default = "defaultSiteTitle")]
+    pub site_title: String,
+    #[serde(default = "defaultFootnote")]
+    pub footnote: String,
+}
 
 #[derive(Deserialize, Clone)]
 pub struct Configuration
@@ -45,6 +56,7 @@ pub struct Configuration
     /// ffmpeg’s `-q:v` argument.
     #[serde(default = "defaultThumbnailQuality")]
     pub thumbnail_quality: u8,
+    pub site_info: SiteInfo,
 }
 
 impl Configuration
@@ -55,6 +67,17 @@ impl Configuration
             |_| rterr!("Failed to read config file at {}", path))?;
         toml::from_str(&content).map_err(
             |_| rterr!("Failed to parse config file"))
+    }
+}
+
+impl Default for SiteInfo
+{
+    fn default() -> Self
+    {
+        Self {
+            site_title: defaultSiteTitle(),
+            footnote: defaultFootnote(),
+        }
     }
 }
 
@@ -73,6 +96,7 @@ impl Default for Configuration
             password: defaultPassword(),
             session_life_time_sec: defaultSessionLifeTime(),
             thumbnail_quality: defaultThumbnailQuality(),
+            site_info: SiteInfo::default(),
         }
     }
 }
