@@ -58,8 +58,10 @@ impl Manager
     {
         let manager = match &self.filename
         {
-            sqlite_connection::Source::File(path) =>
-                sqlite_connection::Manager::file(path),
+            sqlite_connection::Source::File(path) => {
+                info!("Opening database at {:?}...", path);
+                sqlite_connection::Manager::file(path)
+            },
             sqlite_connection::Source::Memory =>
                 sqlite_connection::Manager::memory(),
         };

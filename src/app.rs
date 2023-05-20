@@ -273,7 +273,7 @@ impl App
 {
     pub fn new(config: Configuration) -> Result<Self, Error>
     {
-        let db_path = Path::new(&config.data_dir).with_file_name("db.sqlite");
+        let db_path = Path::new(&config.data_dir).join("db.sqlite");
         let mut result = Self {
             data_manager: data::Manager::newWithFilename(&db_path),
             templates: Tera::default(),
