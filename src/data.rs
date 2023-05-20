@@ -64,7 +64,7 @@ impl Manager
                 sqlite_connection::Manager::memory(),
         };
         self.connection = Some(r2d2::Pool::new(manager).map_err(
-            |_| rterr!("Failed to create connection pool"))?);
+            |e| rterr!("Failed to create connection pool: {}", e))?);
         Ok(())
     }
 
