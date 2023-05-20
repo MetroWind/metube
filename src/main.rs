@@ -18,7 +18,7 @@ use config::Configuration;
 
 fn main() -> Result<(), Error>
 {
-    env_logger::init();
+    env_logger::Builder::from_default_env().format_timestamp(None).init();
     let opts = clap::Command::new("MeTube")
         .about("A naively simple self-hosted video hosting service")
         .arg(clap::Arg::new("config")
@@ -28,10 +28,6 @@ fn main() -> Result<(), Error>
              .default_value("/etc/metube.toml")
              .help("Path of config file."))
         .get_matches();
-
-    env_logger::Builder::default().format_timestamp(None)
-        .filter_level(log::LevelFilter::Info)
-        .init();
 
     let config_path = opts.get_one::<String>("config").unwrap();
     let config = if Path::new(&config_path).exists()
